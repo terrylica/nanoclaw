@@ -57,6 +57,8 @@ interface OrchestratorState {
 interface Finding {
   type: 'bug' | 'performance-regression' | 'test-gap' | 'daemon-behavior';
   severity: 'low' | 'medium' | 'high' | 'critical';
+  /** Expert self-assessed confidence 1-5 (5 = proven with evidence) */
+  confidence?: number;
   title: string;
   description: string;
   files: string[];
@@ -107,6 +109,34 @@ function loadState(): OrchestratorState {
 function saveState(state: OrchestratorState): void {
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+}
+
+// --- Log Rotation ---
+
+const LOG_FILE = '/tmp/orchestrator.log';
+const MAX_LOG_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+
+/** Rotate log file if it exceeds MAX_LOG_SIZE_BYTES */
+function rotateLogIfNeeded(): void {
+  try {
+    if (!fs.existsSync(LOG_FILE)) return;
+    const stats = fs.statSync(LOG_FILE);
+    if (stats.size > MAX_LOG_SIZE_BYTES) {
+      // Keep last 2MB, discard the rest
+      const content = fs.readFileSync(LOG_FILE, 'utf-8');
+      const keepFrom = content.length - 2 * 1024 * 1024;
+      const newContent = keepFrom > 0
+        ? '... (log rotated)\n' + content.slice(keepFrom)
+        : content;
+      fs.writeFileSync(LOG_FILE, newContent);
+      logger.info(
+        { oldSize: stats.size, newSize: newContent.length },
+        'Log file rotated',
+      );
+    }
+  } catch {
+    // Non-fatal — don't crash the orchestrator over log rotation
+  }
 }
 
 /** Check and update hourly rate limit window */
@@ -269,10 +299,11 @@ const EXPERT_RESPONSE_FORMAT = `
 Respond with a JSON array of findings. Each finding has:
 - type: one of [bug, performance-regression, test-gap, daemon-behavior]
 - severity: low | medium | high | critical
+- confidence: integer 1-5 (1=uncertain guess, 5=confirmed with evidence from source code)
 - title: concise, unique, specific (not generic)
 - description: 2-3 sentences explaining the concern, referencing specific line numbers from the source code
 - files: array of affected file paths
-- validation: shell command to verify
+- validation: shell command that PROVES the issue exists (must be runnable, e.g. grep for the problematic pattern)
 
 BEFORE REPORTING: Read the FULL SOURCE CODE above, not just the diff. Check:
 - Is this already handled by guards, fallbacks, or platform checks elsewhere in the file?
@@ -280,6 +311,14 @@ BEFORE REPORTING: Read the FULL SOURCE CODE above, not just the diff. Check:
 - Is "missing persistence" actually "intentionally stateless" (adaptive loops, freshness re-evaluation)?
 - Would fixing this add unnecessary complexity for negligible benefit?
 
+CONFIDENCE SCORING:
+- 5: You can point to exact lines in the source that prove the issue
+- 4: Strong evidence but relies on assumptions about runtime behavior
+- 3: Plausible concern but code context is ambiguous
+- 2: Speculative — the pattern looks concerning but may be intentional
+- 1: Gut feeling only — no concrete evidence
+
+Only report findings with confidence >= 4.
 If nothing warrants attention or you're not confident, respond with: []
 Prefer returning [] over returning a questionable finding.
 
@@ -534,11 +573,19 @@ async function triageChanges(
   // Deduplicate across perspectives
   const deduped = deduplicateFindings(allFindings);
 
-  // Filter: only medium+ severity, max 5, sort by severity desc
+  // Filter: confidence >= 4, medium+ severity, max 5, sort by severity desc
   const filtered = deduped
-    .filter(
-      (f) => severityRank(f.severity) >= severityRank(MIN_SEVERITY_FOR_ISSUE),
-    )
+    .filter((f) => {
+      // Confidence gate: experts must self-score >= 4 (from FP prevention research)
+      if (f.confidence !== undefined && f.confidence < 4) {
+        logger.info(
+          { title: f.title, confidence: f.confidence },
+          'Finding below confidence threshold, skipping',
+        );
+        return false;
+      }
+      return severityRank(f.severity) >= severityRank(MIN_SEVERITY_FOR_ISSUE);
+    })
     .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
     .slice(0, MAX_FINDINGS_PER_CYCLE);
 
@@ -843,6 +890,72 @@ function severityRank(s: string): number {
     critical: 4,
   };
   return ranks[s] || 0;
+}
+
+// --- Verification Script Execution ---
+
+/**
+ * Run the finding's validation command to verify the issue actually exists.
+ * If the command fails (exit code != 0 or no output), the finding is likely
+ * a hallucination — the problematic pattern doesn't exist in the code.
+ *
+ * Inspired by CodeRabbit's "agentic verification" pattern (FP research).
+ */
+function verifyFindingScript(
+  finding: Finding,
+  repoPath: string,
+): { verified: boolean; output: string } {
+  const cmd = finding.validation?.trim();
+  if (!cmd || cmd.length < 3) {
+    return { verified: false, output: 'No validation command provided' };
+  }
+
+  // Safety: only allow grep, rg, find, cat, head, wc, cargo, python, pytest commands
+  const allowedPrefixes = [
+    'grep',
+    'rg',
+    'find',
+    'cat',
+    'head',
+    'tail',
+    'wc',
+    'cargo',
+    'python',
+    'pytest',
+    'ls',
+  ];
+  const firstWord = cmd.split(/\s+/)[0];
+  if (!allowedPrefixes.some((p) => firstWord.startsWith(p))) {
+    logger.info(
+      { cmd: cmd.slice(0, 50), title: finding.title },
+      'Validation command not in allowlist, skipping verification',
+    );
+    return { verified: true, output: 'Command not verifiable (not in allowlist)' };
+  }
+
+  try {
+    const result = execSync(cmd, {
+      cwd: repoPath,
+      encoding: 'utf-8',
+      timeout: 10_000,
+      maxBuffer: 256 * 1024,
+    });
+    const output = result.trim();
+    if (output.length === 0) {
+      logger.info(
+        { title: finding.title, cmd: cmd.slice(0, 80) },
+        'Verification script returned empty — finding may be hallucinated',
+      );
+      return { verified: false, output: 'Command returned empty output' };
+    }
+    return { verified: true, output: output.slice(0, 500) };
+  } catch (err) {
+    logger.info(
+      { title: finding.title, cmd: cmd.slice(0, 80), err },
+      'Verification script failed — finding likely hallucinated',
+    );
+    return { verified: false, output: `Command failed: ${String(err).slice(0, 200)}` };
+  }
 }
 
 // --- Claude Validation (Phase 3) ---
@@ -1581,11 +1694,10 @@ export async function startOrchestratorLoop(
         state.lastHeartbeat = new Date().toISOString();
         saveState(state);
 
-        // Sync cc-skills on heartbeat to stay updated
+        // Heartbeat maintenance
         if (ccSkillsPath) syncCcSkills(ccSkillsPath);
-
-        // Learn from rejected issues (closed as "not planned")
         syncFalsePositivePatterns();
+        rotateLogIfNeeded();
       }
 
       // Step 1: git pull
@@ -1662,6 +1774,18 @@ export async function startOrchestratorLoop(
         // Fuzzy dedup check
         if (issueExistsFuzzy(finding.title)) {
           logger.info({ title: finding.title }, 'Skipping duplicate finding');
+          continue;
+        }
+
+        // Pre-validation: run the finding's verification script
+        // If the script fails, the finding is likely hallucinated — skip without wasting Claude
+        const scriptCheck = verifyFindingScript(finding, config.repoPath);
+        if (!scriptCheck.verified) {
+          state.findingsRejected++;
+          logger.info(
+            { title: finding.title, reason: scriptCheck.output },
+            'Finding failed verification script — likely hallucinated',
+          );
           continue;
         }
 
