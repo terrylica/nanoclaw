@@ -246,9 +246,7 @@ async function queryMiniMax(
       content: Array<{ type: string; text?: string }>;
     };
     // Filter out thinking blocks — MiniMax returns thinking before text
-    const textBlocks = data.content.filter(
-      (b) => b.type === 'text' && b.text,
-    );
+    const textBlocks = data.content.filter((b) => b.type === 'text' && b.text);
     return textBlocks.map((b) => b.text!).join('');
   } catch (err) {
     clearTimeout(timer);
@@ -272,11 +270,18 @@ Respond with a JSON array of findings. Each finding has:
 - type: one of [bug, performance-regression, test-gap, daemon-behavior]
 - severity: low | medium | high | critical
 - title: concise, unique, specific (not generic)
-- description: 2-3 sentences explaining the concern and its impact
+- description: 2-3 sentences explaining the concern, referencing specific line numbers from the source code
 - files: array of affected file paths
 - validation: shell command to verify
 
-If nothing warrants attention, respond with: []
+BEFORE REPORTING: Read the FULL SOURCE CODE above, not just the diff. Check:
+- Is this already handled by guards, fallbacks, or platform checks elsewhere in the file?
+- Is silent failure intentional for best-effort utilities (allocator hints, cache warmup)?
+- Is "missing persistence" actually "intentionally stateless" (adaptive loops, freshness re-evaluation)?
+- Would fixing this add unnecessary complexity for negligible benefit?
+
+If nothing warrants attention or you're not confident, respond with: []
+Prefer returning [] over returning a questionable finding.
 
 JSON:`;
 
@@ -366,15 +371,43 @@ function buildTriagePrompt(
   diff: string,
   commitLog: string,
   changedFiles: string[],
+  repoPath: string,
 ): string {
+  // Include source file contents — experts need full context, not just diffs.
+  // Root cause of false positives #231/#234: experts saw only the diff and missed
+  // platform guards, design patterns, and surrounding code that explained the behavior.
+  const sourceContext = changedFiles
+    .slice(0, 5)
+    .map((f) => {
+      const content = readRepoFile(repoPath, f);
+      if (!content) return '';
+      // Truncate large files but include enough context
+      const truncated =
+        content.length > 12_000
+          ? content.slice(0, 12_000) + '\n... (truncated)'
+          : content;
+      return `--- ${f} (full source) ---\n${truncated}\n`;
+    })
+    .filter(Boolean)
+    .join('\n');
+
   return `CHANGED FILES:
 ${changedFiles.join('\n')}
 
 COMMIT LOG:
 ${commitLog}
 
-DIFF:
-${diff.slice(0, 50_000)}
+FULL SOURCE OF CHANGED FILES:
+${sourceContext.slice(0, 60_000)}
+
+DIFF (what changed):
+${diff.slice(0, 30_000)}
+
+IMPORTANT: Before reporting a finding, verify it against the FULL SOURCE CODE above.
+- Check if the concern is already handled elsewhere in the file
+- Check if there are platform guards, fallback paths, or intentional design patterns
+- Check if the behavior is by-design for this specific use case
+- A finding without evidence in the source code is a false positive
 
 JSON:`;
 }
@@ -421,7 +454,10 @@ function deduplicateFindings(allFindings: Finding[]): Finding[] {
       const existing = unique[dupeIndex];
       const newPerspectives = finding.sourcePerspectives || [];
       existing.sourcePerspectives = [
-        ...new Set([...(existing.sourcePerspectives || []), ...newPerspectives]),
+        ...new Set([
+          ...(existing.sourcePerspectives || []),
+          ...newPerspectives,
+        ]),
       ];
       // Upgrade severity if duplicate has higher severity
       if (severityRank(finding.severity) > severityRank(existing.severity)) {
@@ -447,7 +483,7 @@ async function triageChanges(
   apiKey: string,
   repoPath: string,
 ): Promise<TriageResult> {
-  const prompt = buildTriagePrompt(diff, commitLog, changedFiles);
+  const prompt = buildTriagePrompt(diff, commitLog, changedFiles, repoPath);
 
   // Run all expert perspectives in parallel (~$0.05 total, ~15s wall time)
   const perspectiveResults = await Promise.allSettled(
@@ -488,7 +524,10 @@ async function triageChanges(
   }
 
   logger.info(
-    { perspectives: perspectiveSummaries.join(', '), totalRaw: allFindings.length },
+    {
+      perspectives: perspectiveSummaries.join(', '),
+      totalRaw: allFindings.length,
+    },
     'All expert perspectives collected',
   );
 
@@ -497,22 +536,74 @@ async function triageChanges(
 
   // Filter: only medium+ severity, max 5, sort by severity desc
   const filtered = deduped
-    .filter((f) => severityRank(f.severity) >= severityRank(MIN_SEVERITY_FOR_ISSUE))
+    .filter(
+      (f) => severityRank(f.severity) >= severityRank(MIN_SEVERITY_FOR_ISSUE),
+    )
     .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
     .slice(0, MAX_FINDINGS_PER_CYCLE);
 
-  // If we have findings, do a MiniMax consensus round to eliminate obvious false positives
+  // If we have findings, run two more MiniMax rounds:
+  // 1. Consensus round: skeptical reviewer cross-references against source code
+  // 2. Devil's advocate round: actively tries to disprove each surviving finding
+  // Both are cheap (~$0.01 each) and catch different types of false positives.
   if (filtered.length > 0) {
+    // Load false positive patterns from previously closed-as-wontfix issues
+    const fpPatterns = loadFalsePositivePatterns();
+
+    // Filter out findings that match known false positive patterns
+    const afterFpFilter = fpPatterns.length > 0
+      ? filtered.filter((f) => {
+          const matchesFp = fpPatterns.some((pattern) => {
+            const patternWords = extractWords(pattern);
+            const findingWords = extractWords(f.title + ' ' + f.description);
+            const intersection = findingWords.filter((w) => patternWords.includes(w));
+            const union = new Set([...findingWords, ...patternWords]);
+            return union.size > 0 && intersection.length / union.size >= 0.35;
+          });
+          if (matchesFp) {
+            logger.info(
+              { title: f.title },
+              'Finding matches known false positive pattern, skipping',
+            );
+          }
+          return !matchesFp;
+        })
+      : filtered;
+
+    if (afterFpFilter.length === 0) {
+      return {
+        findings: [],
+        summary: `${allFindings.length} raw → ${deduped.length} deduped → ${filtered.length} filtered → 0 after false positive pattern matching`,
+      };
+    }
+
+    // Round 1: Consensus (skeptical reviewer)
     const consensusFindings = await runConsensusRound(
-      filtered,
+      afterFpFilter,
       diff,
       changedFiles,
       apiKey,
       repoPath,
     );
+
+    if (consensusFindings.length === 0) {
+      return {
+        findings: [],
+        summary: `${allFindings.length} raw → ${deduped.length} deduped → ${afterFpFilter.length} filtered → 0 after consensus`,
+      };
+    }
+
+    // Round 2: Devil's advocate — actively tries to disprove each finding
+    const advocateFindings = await runDevilsAdvocateRound(
+      consensusFindings,
+      changedFiles,
+      apiKey,
+      repoPath,
+    );
+
     return {
-      findings: consensusFindings,
-      summary: `${allFindings.length} raw → ${deduped.length} deduped → ${filtered.length} filtered → ${consensusFindings.length} after consensus`,
+      findings: advocateFindings,
+      summary: `${allFindings.length} raw → ${deduped.length} deduped → ${afterFpFilter.length} filtered → ${consensusFindings.length} consensus → ${advocateFindings.length} after devil's advocate`,
     };
   }
 
@@ -570,7 +661,18 @@ Be skeptical. A finding is only valid if you can see the actual problem in the s
 
 JSON:`;
 
-  const consensusSystem = `You are a senior engineer at a financial data company reviewing automated code analysis findings. Your job is to eliminate false positives by cross-referencing findings against the actual source code. You are conservative — when in doubt, keep the finding.`;
+  const consensusSystem = `You are a senior engineer at a financial data company reviewing automated code analysis findings. Your job is to AGGRESSIVELY eliminate false positives by cross-referencing findings against the actual source code.
+
+COMMON FALSE POSITIVE PATTERNS TO CHECK:
+1. "Silent catch/pass" in best-effort utility code — if the function is optional/fallback, silent failure is correct
+2. "State not persisted" when the design is intentionally stateless (e.g., adaptive loops that re-evaluate freshness)
+3. "Missing error handling" when the code has platform guards or early returns that make the error path unreachable
+4. "Hardcoded value" when it's a tuned parameter with comments explaining the choice
+5. "Missing test" for trivial getters, configuration, or platform-specific paths
+6. "Performance concern" for code that runs infrequently (startup, shutdown, config load)
+7. "Resource leak" when the resource is cleaned up by scope/RAII/context manager
+
+When in doubt, REJECT the finding. A false positive issue wastes more time than a missed real bug.`;
 
   try {
     const raw = await queryMiniMax(consensusPrompt, apiKey, consensusSystem);
@@ -593,8 +695,141 @@ JSON:`;
   }
 }
 
+/**
+ * Devil's advocate round: actively tries to disprove each finding.
+ * Unlike the consensus round (which asks "is this valid?"), this round
+ * asks "how could this be intentional/correct?" — a fundamentally different
+ * prompt that catches different false positive patterns.
+ *
+ * Cost: ~$0.01 per call. Worth it to avoid wasting user time on false positives.
+ */
+async function runDevilsAdvocateRound(
+  findings: Finding[],
+  changedFiles: string[],
+  apiKey: string,
+  repoPath: string,
+): Promise<Finding[]> {
+  const fileContents = changedFiles
+    .slice(0, 5)
+    .map((f) => {
+      const content = readRepoFile(repoPath, f);
+      if (!content) return '';
+      return `--- ${f} ---\n${content.slice(0, 10_000)}\n`;
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  const advocatePrompt = `You are a DEVIL'S ADVOCATE. Your job is to DEFEND the code and DISPROVE each finding.
+
+For each finding below, argue why the code is CORRECT as written. Consider:
+- Is this behavior intentional for the specific use case (financial data processing)?
+- Is the "problem" actually handled by a guard, fallback, or platform check elsewhere?
+- Is this a standard pattern in Rust/Python that looks wrong but is correct?
+- Would "fixing" this actually break something or add unnecessary complexity?
+- Is the "missing" feature actually unneeded for this architecture?
+
+FINDINGS TO CHALLENGE:
+${JSON.stringify(findings, null, 2)}
+
+SOURCE CODE:
+${fileContents.slice(0, 40_000)}
+
+For each finding, respond with:
+- SURVIVES — if you CANNOT find a good defense for the code (the finding is genuinely problematic)
+- DISPROVED — if you CAN explain why the code is correct as-is
+
+Respond with a JSON array containing ONLY the findings that SURVIVE your challenge.
+If you can disprove ALL findings, respond with: []
+
+JSON:`;
+
+  const advocateSystem = `You are a code defense attorney. Your expertise is finding legitimate reasons why code that LOOKS problematic is actually correct. You know that:
+- Best-effort utilities (allocator hints, cache warmup) should fail silently
+- Stateless loops are often better than stateful ones (freshness re-evaluation)
+- Platform guards make certain error paths unreachable
+- Financial systems often have intentionally conservative/simple error handling
+- "Missing" persistence is often "intentionally absent" persistence
+
+Your bias is toward DEFENDING the code. Only let a finding survive if you genuinely cannot explain the code's behavior as correct.`;
+
+  try {
+    const t0 = Date.now();
+    const raw = await queryMiniMax(advocatePrompt, apiKey, advocateSystem);
+    const survivingFindings = parseMiniMaxFindings(raw);
+    const durationMs = Date.now() - t0;
+
+    logger.info(
+      { input: findings.length, surviving: survivingFindings.length, durationMs },
+      "Devil's advocate round complete",
+    );
+
+    if (raw.trim().startsWith('[')) {
+      return survivingFindings;
+    }
+    return findings;
+  } catch (err) {
+    logger.warn({ err }, "Devil's advocate round failed, keeping findings");
+    return findings;
+  }
+}
+
+// --- False Positive Learning ---
+
+const FP_PATTERNS_FILE = path.join(DATA_DIR, 'false-positive-patterns.json');
+
+/**
+ * Load false positive patterns from previously closed-as-wontfix issues.
+ * These are learned from `syncFalsePositivePatterns()` which runs on heartbeat.
+ */
+function loadFalsePositivePatterns(): string[] {
+  try {
+    if (fs.existsSync(FP_PATTERNS_FILE)) {
+      return JSON.parse(fs.readFileSync(FP_PATTERNS_FILE, 'utf-8'));
+    }
+  } catch {
+    logger.warn('Failed to load false positive patterns');
+  }
+  return [];
+}
+
+/**
+ * Sync false positive patterns from GitHub Issues closed as "not planned".
+ * These are NanoClaw issues the user explicitly rejected — we should learn
+ * to avoid similar findings in the future.
+ */
+function syncFalsePositivePatterns(): void {
+  try {
+    const result = execSync(
+      'gh issue list --repo terrylica/opendeviationbar-py --label nanoclaw --state closed --json title,stateReason --limit 50',
+      { encoding: 'utf-8', timeout: 10_000 },
+    );
+    const issues = JSON.parse(result) as Array<{ title: string; stateReason: string }>;
+
+    // Only learn from issues closed as "not planned" (false positives)
+    const fpTitles = issues
+      .filter((i) => i.stateReason === 'NOT_PLANNED')
+      .map((i) => i.title);
+
+    if (fpTitles.length > 0) {
+      fs.mkdirSync(path.dirname(FP_PATTERNS_FILE), { recursive: true });
+      fs.writeFileSync(FP_PATTERNS_FILE, JSON.stringify(fpTitles, null, 2));
+      logger.info(
+        { count: fpTitles.length },
+        'False positive patterns synced from closed issues',
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to sync false positive patterns');
+  }
+}
+
 function severityRank(s: string): number {
-  const ranks: Record<string, number> = { low: 1, medium: 2, high: 3, critical: 4 };
+  const ranks: Record<string, number> = {
+    low: 1,
+    medium: 2,
+    high: 3,
+    critical: 4,
+  };
   return ranks[s] || 0;
 }
 
@@ -619,17 +854,18 @@ function validateWithClaude(
       const content = readRepoFile(repoPath, f);
       if (!content) return '';
       // Truncate large files to 10KB
-      const truncated = content.length > 10_000
-        ? content.slice(0, 10_000) + '\n... (truncated)'
-        : content;
+      const truncated =
+        content.length > 10_000
+          ? content.slice(0, 10_000) + '\n... (truncated)'
+          : content;
       return `--- ${f} ---\n${truncated}\n`;
     })
     .filter(Boolean)
     .join('\n');
 
-  const prompt = `You are validating a code quality finding for opendeviationbar-py (Rust+Python maturin project).
+  const prompt = `You are the FINAL GATE before a GitHub issue is auto-created for opendeviationbar-py (Rust+Python maturin project, financial data processing). A false positive wastes the maintainer's time. Be EXTREMELY skeptical.
 
-FINDING:
+FINDING TO VALIDATE:
 - Type: ${finding.type}
 - Severity: ${finding.severity}
 - Title: ${finding.title}
@@ -638,19 +874,26 @@ FINDING:
 - Suggested validation: ${finding.validation}
 - Commit: ${headCommit.slice(0, 7)}
 
-SOURCE CODE OF AFFECTED FILES:
+FULL SOURCE CODE OF AFFECTED FILES:
 ${fileContexts || '(files not readable)'}
 
-TASK: Analyze the source code and determine if this finding is a genuine concern.
+VALIDATION CHECKLIST — answer each before deciding:
+1. Can you see the EXACT code that's problematic? (not just infer it from the diff)
+2. Is there a guard, fallback, or early return that makes this unreachable?
+3. Is this behavior intentional for the specific domain (financial data, 24/7 daemons)?
+4. Would the suggested fix actually improve things, or add unnecessary complexity?
+5. Could this be a best-effort utility where silent failure is correct?
+6. Is the "missing" feature actually unneeded for this architecture?
 
 Respond with EXACTLY this JSON format (no markdown fences, no extra text):
-{"confirmed": true/false, "confidence": "low"/"medium"/"high", "analysis": "2-3 sentence explanation", "suggestedFix": "optional fix suggestion"}
+{"confirmed": true/false, "confidence": "low"/"medium"/"high", "analysis": "2-3 sentence explanation referencing specific line numbers", "suggestedFix": "optional fix suggestion"}
 
 RULES:
-- confirmed=true only if the concern is real and actionable
-- confirmed=false if: it's by-design, already handled, or a false positive
-- confidence=high means you're very sure; low means it's debatable
-- Be skeptical — default to false unless the evidence is clear`;
+- confirmed=true ONLY if you can point to specific lines where the bug/issue exists
+- confirmed=false if: it's by-design, already handled, unreachable, or a false positive
+- When in doubt, set confirmed=false — missing a real bug is better than filing a false positive
+- confidence=high means you checked all 6 questions above and are certain
+- Reference specific line numbers or code snippets in your analysis`;
 
   try {
     logger.info(
@@ -700,10 +943,7 @@ RULES:
 
     return validation;
   } catch (err) {
-    logger.error(
-      { err, title: finding.title },
-      'Claude validation error',
-    );
+    logger.error({ err, title: finding.title }, 'Claude validation error');
     return null;
   }
 }
@@ -738,7 +978,11 @@ function issueExistsFuzzy(title: string): boolean {
 
       if (similarity >= 0.5) {
         logger.info(
-          { existing: issue.title, new: title, similarity: similarity.toFixed(2) },
+          {
+            existing: issue.title,
+            new: title,
+            similarity: similarity.toFixed(2),
+          },
           'Fuzzy duplicate detected',
         );
         return true;
@@ -828,7 +1072,13 @@ async function suggestLabels(
   // Keyword fallback mapping (cc-skills pattern)
   const keywordMap: Record<string, string[]> = {
     bug: ['bug', 'error', 'crash', 'broken', 'fail', 'defect'],
-    'performance-regression': ['performance', 'perf', 'regression', 'slow', 'benchmark'],
+    'performance-regression': [
+      'performance',
+      'perf',
+      'regression',
+      'slow',
+      'benchmark',
+    ],
     'test-gap': ['testing', 'test', 'coverage', 'quality'],
     'daemon-behavior': ['daemon', 'service', 'runtime', 'behavior'],
   };
@@ -849,7 +1099,11 @@ CONFIDENCE: ${validation.confidence}
 
 Return format: ["label1", "label2"]`;
 
-    const raw = await queryMiniMax(prompt, apiKey, 'You suggest GitHub issue labels. Return only a JSON array.');
+    const raw = await queryMiniMax(
+      prompt,
+      apiKey,
+      'You suggest GitHub issue labels. Return only a JSON array.',
+    );
     const suggested = JSON.parse(raw.trim()) as string[];
 
     // Validate: only keep labels that exist in the repo
@@ -873,7 +1127,10 @@ Return format: ["label1", "label2"]`;
  * Search for related existing issues to link in the new issue body.
  * cc-skills pattern: duplicate warnings + related issue references.
  */
-function searchRelatedIssues(title: string, _files: string[]): Array<{ number: number; title: string; url: string }> {
+function searchRelatedIssues(
+  title: string,
+  _files: string[],
+): Array<{ number: number; title: string; url: string }> {
   try {
     // Search by key words from the title
     const searchTerms = extractWords(title).slice(0, 3).join(' ');
@@ -881,7 +1138,11 @@ function searchRelatedIssues(title: string, _files: string[]): Array<{ number: n
       `gh issue list --repo terrylica/opendeviationbar-py --search "${searchTerms.replace(/"/g, '\\"')}" --state all --limit 5 --json number,title,url`,
       { encoding: 'utf-8', timeout: 10_000 },
     );
-    const issues = JSON.parse(result) as Array<{ number: number; title: string; url: string }>;
+    const issues = JSON.parse(result) as Array<{
+      number: number;
+      title: string;
+      url: string;
+    }>;
     return issues;
   } catch {
     return [];
@@ -890,8 +1151,11 @@ function searchRelatedIssues(title: string, _files: string[]): Array<{ number: n
 
 // --- Type-Specific Issue Templates (cc-skills pattern) ---
 
-const FINDING_TYPE_TEMPLATES: Record<string, (f: Finding, v: ValidationResult, commit: string) => string> = {
-  'bug': (f, v, commit) => `## Bug Report
+const FINDING_TYPE_TEMPLATES: Record<
+  string,
+  (f: Finding, v: ValidationResult, commit: string) => string
+> = {
+  bug: (f, v, commit) => `## Bug Report
 
 ### Description
 
@@ -999,7 +1263,7 @@ ${v.suggestedFix ? `### Suggested Fix\n\n${v.suggestedFix}\n` : ''}
 // --- Title Optimization (cc-skills pattern: use full 256 chars) ---
 
 const TITLE_TYPE_PREFIX: Record<string, string> = {
-  'bug': 'Bug',
+  bug: 'Bug',
   'performance-regression': 'Perf',
   'test-gap': 'Test Gap',
   'daemon-behavior': 'Daemon',
@@ -1007,8 +1271,10 @@ const TITLE_TYPE_PREFIX: Record<string, string> = {
 
 function optimizeTitle(finding: Finding): string {
   const prefix = TITLE_TYPE_PREFIX[finding.type] || finding.type;
-  const severityTag = finding.severity === 'critical' || finding.severity === 'high'
-    ? ` [${finding.severity}]` : '';
+  const severityTag =
+    finding.severity === 'critical' || finding.severity === 'high'
+      ? ` [${finding.severity}]`
+      : '';
   // cc-skills pattern: use full 256-char GitHub title limit for informative, searchable titles
   const base = `${prefix}: ${finding.title}${severityTag}`;
   if (base.length <= 256) return base;
@@ -1025,7 +1291,8 @@ function createGitHubIssue(
   labels: string[],
 ): string | null {
   const commitShort = headCommit.slice(0, 7);
-  const template = FINDING_TYPE_TEMPLATES[finding.type] || FINDING_TYPE_TEMPLATES['bug'];
+  const template =
+    FINDING_TYPE_TEMPLATES[finding.type] || FINDING_TYPE_TEMPLATES['bug'];
   const typedBody = template(finding, validation, commitShort);
 
   // Discovery provenance (cc-skills gh-tools pattern)
@@ -1036,9 +1303,10 @@ function createGitHubIssue(
 
   // Related issues
   const related = searchRelatedIssues(finding.title, finding.files);
-  const relatedSection = related.length > 0
-    ? `\n### Related Issues\n\n${related.map((r) => `- #${r.number} — ${r.title}`).join('\n')}\n`
-    : '';
+  const relatedSection =
+    related.length > 0
+      ? `\n### Related Issues\n\n${related.map((r) => `- #${r.number} — ${r.title}`).join('\n')}\n`
+      : '';
 
   // YAML frontmatter (machine-readable metadata)
   const frontmatter = `---
@@ -1086,16 +1354,25 @@ ${provenanceSection}
     );
 
     // Clean up temp file
-    try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      /* ignore */
+    }
 
     const url = result.trim();
-    logger.info({ url, type: finding.type, confidence: validation.confidence, labels: labelStr }, 'GitHub issue created');
+    logger.info(
+      {
+        url,
+        type: finding.type,
+        confidence: validation.confidence,
+        labels: labelStr,
+      },
+      'GitHub issue created',
+    );
     return url;
   } catch (err) {
-    logger.error(
-      { err, title },
-      'Failed to create GitHub issue',
-    );
+    logger.error({ err, title }, 'Failed to create GitHub issue');
     return null;
   }
 }
@@ -1242,6 +1519,9 @@ export async function startOrchestratorLoop(
     logger.info({ ccSkillsPath }, 'cc-skills path configured');
   }
 
+  // Load false positive patterns from previously rejected issues
+  syncFalsePositivePatterns();
+
   logger.info(
     {
       repoPath: config.repoPath,
@@ -1291,6 +1571,9 @@ export async function startOrchestratorLoop(
 
         // Sync cc-skills on heartbeat to stay updated
         if (ccSkillsPath) syncCcSkills(ccSkillsPath);
+
+        // Learn from rejected issues (closed as "not planned")
+        syncFalsePositivePatterns();
       }
 
       // Step 1: git pull
@@ -1379,14 +1662,20 @@ export async function startOrchestratorLoop(
 
         if (!validation) {
           // Claude validation failed (timeout, error) — skip, don't create unvalidated issue
-          logger.warn({ title: finding.title }, 'Skipping finding — Claude validation unavailable');
+          logger.warn(
+            { title: finding.title },
+            'Skipping finding — Claude validation unavailable',
+          );
           continue;
         }
 
         if (!validation.confirmed) {
           state.findingsRejected++;
           logger.info(
-            { title: finding.title, analysis: validation.analysis.slice(0, 100) },
+            {
+              title: finding.title,
+              analysis: validation.analysis.slice(0, 100),
+            },
             'Finding rejected by Claude',
           );
           continue;
@@ -1454,7 +1743,10 @@ export async function startOrchestratorLoop(
         CYCLE_COOLDOWN_ERROR_MS * Math.pow(2, state.consecutiveErrors - 1),
         10 * 60_000,
       );
-      logger.error({ err, backoff, consecutiveErrors: state.consecutiveErrors }, 'Orchestrator cycle error');
+      logger.error(
+        { err, backoff, consecutiveErrors: state.consecutiveErrors },
+        'Orchestrator cycle error',
+      );
 
       // Alert on repeated failures
       if (state.consecutiveErrors >= 3 && botToken && chatId) {
