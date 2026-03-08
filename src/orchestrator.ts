@@ -125,9 +125,10 @@ function rotateLogIfNeeded(): void {
       // Keep last 2MB, discard the rest
       const content = fs.readFileSync(LOG_FILE, 'utf-8');
       const keepFrom = content.length - 2 * 1024 * 1024;
-      const newContent = keepFrom > 0
-        ? '... (log rotated)\n' + content.slice(keepFrom)
-        : content;
+      const newContent =
+        keepFrom > 0
+          ? '... (log rotated)\n' + content.slice(keepFrom)
+          : content;
       fs.writeFileSync(LOG_FILE, newContent);
       logger.info(
         { oldSize: stats.size, newSize: newContent.length },
@@ -930,7 +931,10 @@ function verifyFindingScript(
       { cmd: cmd.slice(0, 50), title: finding.title },
       'Validation command not in allowlist, skipping verification',
     );
-    return { verified: true, output: 'Command not verifiable (not in allowlist)' };
+    return {
+      verified: true,
+      output: 'Command not verifiable (not in allowlist)',
+    };
   }
 
   try {
@@ -954,7 +958,10 @@ function verifyFindingScript(
       { title: finding.title, cmd: cmd.slice(0, 80), err },
       'Verification script failed — finding likely hallucinated',
     );
-    return { verified: false, output: `Command failed: ${String(err).slice(0, 200)}` };
+    return {
+      verified: false,
+      output: `Command failed: ${String(err).slice(0, 200)}`,
+    };
   }
 }
 
@@ -1055,7 +1062,37 @@ RULES:
       jsonStr = jsonMatch[0];
     }
 
-    const validation: ValidationResult = JSON.parse(jsonStr);
+    let validation: ValidationResult;
+    try {
+      validation = JSON.parse(jsonStr);
+    } catch (parseErr) {
+      // Log full output on parse failure so we don't lose Claude's response
+      logger.error(
+        {
+          title: finding.title,
+          output: output.slice(0, 500),
+          parseErr,
+        },
+        'Claude validation JSON parse failed — response logged for debugging',
+      );
+      return null;
+    }
+
+    // Schema validation: ensure required fields exist
+    if (
+      typeof validation.confirmed !== 'boolean' ||
+      !validation.confidence ||
+      !validation.analysis
+    ) {
+      logger.error(
+        {
+          title: finding.title,
+          parsed: JSON.stringify(validation).slice(0, 200),
+        },
+        'Claude validation missing required fields (confirmed/confidence/analysis)',
+      );
+      return null;
+    }
 
     logger.info(
       {
@@ -1134,6 +1171,10 @@ function extractWords(s: string): string[] {
  * Pull latest cc-skills for up-to-date issue templates and patterns.
  * Fire-and-forget — failure is non-fatal.
  */
+/** Cached cc-skills reference content for issue creation quality */
+let ccSkillsLabelStrategy = '';
+let ccSkillsContentTypes = '';
+
 function syncCcSkills(ccSkillsPath: string): void {
   if (!ccSkillsPath || !fs.existsSync(ccSkillsPath)) return;
   try {
@@ -1142,7 +1183,32 @@ function syncCcSkills(ccSkillsPath: string): void {
       timeout: 15_000,
       encoding: 'utf-8',
     });
-    logger.info({ path: ccSkillsPath }, 'cc-skills synced');
+
+    // Read label strategy and content type references for issue creation
+    const labelStrategyPath = path.join(
+      ccSkillsPath,
+      'plugins/gh-tools/skills/issue-create/references/label-strategy.md',
+    );
+    const contentTypesPath = path.join(
+      ccSkillsPath,
+      'plugins/gh-tools/skills/issue-create/references/content-types.md',
+    );
+
+    if (fs.existsSync(labelStrategyPath)) {
+      ccSkillsLabelStrategy = fs.readFileSync(labelStrategyPath, 'utf-8').slice(0, 2000);
+    }
+    if (fs.existsSync(contentTypesPath)) {
+      ccSkillsContentTypes = fs.readFileSync(contentTypesPath, 'utf-8').slice(0, 2000);
+    }
+
+    logger.info(
+      {
+        path: ccSkillsPath,
+        hasLabelStrategy: !!ccSkillsLabelStrategy,
+        hasContentTypes: !!ccSkillsContentTypes,
+      },
+      'cc-skills synced and references loaded',
+    );
   } catch (err) {
     logger.warn({ err }, 'cc-skills sync failed (non-fatal)');
   }
@@ -1209,10 +1275,15 @@ async function suggestLabels(
   };
 
   try {
+    // Inject cc-skills label strategy if available (read from synced repo)
+    const strategyContext = ccSkillsLabelStrategy
+      ? `\nLABEL STRATEGY GUIDE:\n${ccSkillsLabelStrategy.slice(0, 800)}\n`
+      : '';
+
     const prompt = `Suggest 2-4 labels from the EXISTING taxonomy only for this code finding.
 Never suggest labels that don't exist in the list below.
 Return ONLY a JSON array of label names, nothing else.
-
+${strategyContext}
 AVAILABLE LABELS:
 ${repoLabels.map((l) => `- ${l}`).join('\n')}
 
