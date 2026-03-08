@@ -2481,11 +2481,37 @@ ${provenanceSection}
 
 // --- Telegram Notifications ---
 
+// Telemetry: NDJSON log of all Telegram messages for post-analysis
+const TELEMETRY_FILE = path.join(DATA_DIR, 'telegram-telemetry.ndjson');
+
+function logTelemetry(message: string, success: boolean, durationMs: number): void {
+  try {
+    const plainText = message
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>');
+    const entry = JSON.stringify({
+      ts: new Date().toISOString(),
+      success,
+      durationMs,
+      charLen: message.length,
+      plainText: plainText.slice(0, 2000),
+      htmlPreview: message.slice(0, 500),
+    });
+    fs.mkdirSync(path.dirname(TELEMETRY_FILE), { recursive: true });
+    fs.appendFileSync(TELEMETRY_FILE, entry + '\n');
+  } catch {
+    // Telemetry failure must never block the pipeline
+  }
+}
+
 async function sendTelegramNotification(
   message: string,
   botToken: string,
   chatId: string,
 ): Promise<void> {
+  const t0 = Date.now();
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5_000);
@@ -2507,6 +2533,7 @@ async function sendTelegramNotification(
     );
 
     clearTimeout(timer);
+    const durationMs = Date.now() - t0;
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
@@ -2514,8 +2541,12 @@ async function sendTelegramNotification(
         { status: response.status, body: body.slice(0, 200) },
         'Telegram API error',
       );
+      logTelemetry(message, false, durationMs);
+    } else {
+      logTelemetry(message, true, durationMs);
     }
   } catch (err) {
+    logTelemetry(message, false, Date.now() - t0);
     logger.warn({ err }, 'Telegram notification failed (non-fatal)');
   }
 }
@@ -3315,13 +3346,7 @@ export async function startOrchestratorLoop(
           ? new Date(state.lastAlgoScan).getTime()
           : 0;
         if (now - lastAlgoScan >= ALGO_SCAN_INTERVAL_MS && minimaxKey) {
-          await runAlgoScanCycle(
-            config,
-            state,
-            minimaxKey,
-            botToken,
-            chatId,
-          );
+          await runAlgoScanCycle(config, state, minimaxKey, botToken, chatId);
         }
 
         await sleep(CYCLE_COOLDOWN_MS);
