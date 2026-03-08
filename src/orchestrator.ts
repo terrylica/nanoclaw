@@ -10,12 +10,20 @@
  * Safety: rate limiting, fuzzy dedup, exponential backoff, severity gating.
  */
 import { execSync, spawnSync } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { DATA_DIR } from './config.js';
+
+// --- Trace ID ---
+
+/** Generate a short trace ID for action traceability across Telegram messages */
+function traceId(): string {
+  return crypto.randomUUID().slice(0, 8);
+}
 
 // --- Config ---
 
@@ -71,9 +79,9 @@ interface OrchestratorState {
   issueTimestamps?: number[]; // Sliding window: epoch ms of each issue creation
   lastHeartbeat: string;
   lastProactiveScan?: string; // ISO timestamp of last proactive enhancement scan
-  proactiveScanIndex?: number; // Index into file list for round-robin scanning
+  proactiveScanCount?: number; // Total number of enhancement scans run
   lastAlgoScan?: string; // ISO timestamp of last algo correctness scan
-  algoScanIndex?: number; // Index into file list for round-robin algo scanning
+  algoScanCount?: number; // Total number of algo scans run
   startedAt: string;
   consecutiveErrors: number;
   findingsValidated: number;
@@ -663,13 +671,57 @@ ${EXPERT_RESPONSE_FORMAT}`,
   },
 ];
 
-// --- Proactive Enhancement Scanning ---
+// --- Proactive Scanning (Whole-Repo) ---
 //
 // Unlike diff-driven triage (reactive), proactive scanning examines the
-// existing codebase for enhancement opportunities even when no commits land.
-// Runs every PROACTIVE_SCAN_INTERVAL_MS, scanning a rotating batch of files.
+// ENTIRE codebase for issues even when no commits land.
+// Runs every PROACTIVE_SCAN_INTERVAL_MS, scanning ALL files in chunks
+// sized to fit MiniMax's context budget.
 
-const PROACTIVE_SCAN_BATCH_SIZE = 3; // files per scan cycle
+const CHUNK_CHAR_BUDGET = 400_000; // max source chars per MiniMax call
+const PER_FILE_TRUNCATE = 20_000; // truncate individual large files
+
+/**
+ * Chunk all scannable files into groups that fit within MiniMax's context budget.
+ * Returns array of file groups, each group fitting within CHUNK_CHAR_BUDGET.
+ */
+function chunkFilesForContext(
+  repoPath: string,
+  allFiles: string[],
+): { files: string[]; sourceContext: string }[] {
+  const chunks: { files: string[]; sourceContext: string }[] = [];
+  let currentFiles: string[] = [];
+  let currentSource = '';
+  let currentLen = 0;
+
+  for (const f of allFiles) {
+    const content = readRepoFile(repoPath, f);
+    if (!content) continue;
+
+    const truncated =
+      content.length > PER_FILE_TRUNCATE
+        ? content.slice(0, PER_FILE_TRUNCATE) + '\n... (truncated)'
+        : content;
+    const block = `--- ${f} (${content.length} bytes) ---\n${truncated}\n`;
+
+    if (currentLen + block.length > CHUNK_CHAR_BUDGET && currentFiles.length > 0) {
+      chunks.push({ files: [...currentFiles], sourceContext: currentSource });
+      currentFiles = [];
+      currentSource = '';
+      currentLen = 0;
+    }
+
+    currentFiles.push(f);
+    currentSource += block + '\n';
+    currentLen += block.length;
+  }
+
+  if (currentFiles.length > 0) {
+    chunks.push({ files: currentFiles, sourceContext: currentSource });
+  }
+
+  return chunks;
+}
 
 const PROACTIVE_ENHANCEMENT_PROMPT = `You are a memory efficiency and performance optimization expert reviewing existing code in a Rust+Python (maturin) financial data processing library called opendeviationbar-py.
 
@@ -794,7 +846,7 @@ If nothing warrants attention, respond with: []
 JSON:`;
 
 const ALGO_SCAN_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours between algo scans
-const ALGO_SCAN_BATCH_SIZE = 3;
+// (Algo scan uses same CHUNK_CHAR_BUDGET / PER_FILE_TRUNCATE as enhancement scan)
 
 /**
  * Get all scannable source files in the repo, sorted by size (largest first,
@@ -823,131 +875,116 @@ function getScannableFiles(repoPath: string): string[] {
 }
 
 /**
- * Run a proactive enhancement scan on a batch of files.
- * Uses MiniMax to analyze existing code for memory efficiency improvements.
+ * Run a proactive enhancement scan on the ENTIRE repo.
+ * Chunks all files to fit MiniMax context budget, runs each chunk,
+ * and aggregates findings from all chunks.
  */
 async function runProactiveScan(
   repoPath: string,
   apiKey: string,
-  state: OrchestratorState,
-): Promise<Finding[]> {
+): Promise<{ findings: Finding[]; totalFiles: number; chunksScanned: number }> {
   const allFiles = getScannableFiles(repoPath);
-  if (allFiles.length === 0) return [];
+  if (allFiles.length === 0)
+    return { findings: [], totalFiles: 0, chunksScanned: 0 };
 
-  // Round-robin through files
-  const startIdx = (state.proactiveScanIndex || 0) % allFiles.length;
-  const batch = [];
-  for (let i = 0; i < PROACTIVE_SCAN_BATCH_SIZE && i < allFiles.length; i++) {
-    batch.push(allFiles[(startIdx + i) % allFiles.length]);
-  }
+  const chunks = chunkFilesForContext(repoPath, allFiles);
+  const allFindings: Finding[] = [];
 
-  // Advance index for next scan
-  state.proactiveScanIndex =
-    (startIdx + PROACTIVE_SCAN_BATCH_SIZE) % allFiles.length;
+  logger.info(
+    { totalFiles: allFiles.length, chunks: chunks.length },
+    'Running whole-repo proactive enhancement scan',
+  );
 
-  // Read file contents
-  const sourceContext = batch
-    .map((f) => {
-      const content = readRepoFile(repoPath, f);
-      if (!content) return '';
-      const truncated =
-        content.length > 15_000
-          ? content.slice(0, 15_000) + '\n... (truncated)'
-          : content;
-      return `--- ${f} (${content.length} bytes) ---\n${truncated}\n`;
-    })
-    .filter(Boolean)
-    .join('\n');
-
-  if (!sourceContext) return [];
-
-  const prompt = `FILES BEING SCANNED (${batch.length} files, proactive enhancement scan):
-${batch.join('\n')}
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const prompt = `FILES BEING SCANNED (chunk ${ci + 1}/${chunks.length}, ${chunk.files.length} files, proactive enhancement scan):
+${chunk.files.join('\n')}
 
 FULL SOURCE CODE:
-${sourceContext.slice(0, 60_000)}
+${chunk.sourceContext}
 
 ${PROACTIVE_ENHANCEMENT_PROMPT}`;
 
-  logger.info(
-    { files: batch, startIdx, totalFiles: allFiles.length },
-    'Running proactive memory efficiency scan',
-  );
-
-  try {
-    const raw = await queryMiniMax(prompt, apiKey);
-    const findings = parseMiniMaxFindings(raw);
-    // Tag all findings as enhancement type and add source perspective
-    return findings.map((f) => ({
-      ...f,
-      type: 'enhancement' as const,
-      sourcePerspectives: ['proactive-memory-efficiency'],
-    }));
-  } catch (err) {
-    logger.warn({ err }, 'Proactive scan MiniMax query failed');
-    return [];
+    try {
+      const raw = await queryMiniMax(prompt, apiKey);
+      const findings = parseMiniMaxFindings(raw);
+      allFindings.push(
+        ...findings.map((f) => ({
+          ...f,
+          type: 'enhancement' as const,
+          sourcePerspectives: ['proactive-memory-efficiency'],
+        })),
+      );
+      logger.info(
+        { chunk: ci + 1, files: chunk.files.length, findings: findings.length },
+        'Enhancement scan chunk complete',
+      );
+    } catch (err) {
+      logger.warn({ err, chunk: ci + 1 }, 'Enhancement scan chunk failed');
+    }
   }
+
+  return {
+    findings: allFindings,
+    totalFiles: allFiles.length,
+    chunksScanned: chunks.length,
+  };
 }
 
 /**
- * Run a proactive algo correctness scan on a batch of files.
- * Uses MiniMax to analyze existing code for algorithmic inconsistencies.
+ * Run a proactive algo correctness scan on the ENTIRE repo.
+ * Chunks all files to fit MiniMax context budget, runs each chunk,
+ * and aggregates findings from all chunks.
  */
 async function runAlgoCorrectnessScan(
   repoPath: string,
   apiKey: string,
-  state: OrchestratorState,
-): Promise<Finding[]> {
+): Promise<{ findings: Finding[]; totalFiles: number; chunksScanned: number }> {
   const allFiles = getScannableFiles(repoPath);
-  if (allFiles.length === 0) return [];
+  if (allFiles.length === 0)
+    return { findings: [], totalFiles: 0, chunksScanned: 0 };
 
-  const startIdx = (state.algoScanIndex || 0) % allFiles.length;
-  const batch = [];
-  for (let i = 0; i < ALGO_SCAN_BATCH_SIZE && i < allFiles.length; i++) {
-    batch.push(allFiles[(startIdx + i) % allFiles.length]);
-  }
+  const chunks = chunkFilesForContext(repoPath, allFiles);
+  const allFindings: Finding[] = [];
 
-  state.algoScanIndex = (startIdx + ALGO_SCAN_BATCH_SIZE) % allFiles.length;
+  logger.info(
+    { totalFiles: allFiles.length, chunks: chunks.length },
+    'Running whole-repo algo correctness scan',
+  );
 
-  const sourceContext = batch
-    .map((f) => {
-      const content = readRepoFile(repoPath, f);
-      if (!content) return '';
-      const truncated =
-        content.length > 15_000
-          ? content.slice(0, 15_000) + '\n... (truncated)'
-          : content;
-      return `--- ${f} (${content.length} bytes) ---\n${truncated}\n`;
-    })
-    .filter(Boolean)
-    .join('\n');
-
-  if (!sourceContext) return [];
-
-  const prompt = `FILES BEING SCANNED (${batch.length} files, algo correctness scan):
-${batch.join('\n')}
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const prompt = `FILES BEING SCANNED (chunk ${ci + 1}/${chunks.length}, ${chunk.files.length} files, algo correctness scan):
+${chunk.files.join('\n')}
 
 FULL SOURCE CODE:
-${sourceContext.slice(0, 60_000)}
+${chunk.sourceContext}
 
 ${PROACTIVE_ALGO_CORRECTNESS_PROMPT}`;
 
-  logger.info(
-    { files: batch, startIdx, totalFiles: allFiles.length },
-    'Running proactive algo correctness scan',
-  );
-
-  try {
-    const raw = await queryMiniMax(prompt, apiKey);
-    const findings = parseMiniMaxFindings(raw);
-    return findings.map((f) => ({
-      ...f,
-      sourcePerspectives: ['proactive-algo-correctness'],
-    }));
-  } catch (err) {
-    logger.warn({ err }, 'Algo correctness scan MiniMax query failed');
-    return [];
+    try {
+      const raw = await queryMiniMax(prompt, apiKey);
+      const findings = parseMiniMaxFindings(raw);
+      allFindings.push(
+        ...findings.map((f) => ({
+          ...f,
+          sourcePerspectives: ['proactive-algo-correctness'],
+        })),
+      );
+      logger.info(
+        { chunk: ci + 1, files: chunk.files.length, findings: findings.length },
+        'Algo correctness scan chunk complete',
+      );
+    } catch (err) {
+      logger.warn({ err, chunk: ci + 1 }, 'Algo correctness scan chunk failed');
+    }
   }
+
+  return {
+    findings: allFindings,
+    totalFiles: allFiles.length,
+    chunksScanned: chunks.length,
+  };
 }
 
 /**
@@ -962,8 +999,8 @@ async function runAlgoScanCycle(
   chatId: string,
 ): Promise<void> {
   const headCommit = getHeadCommit(config.repoPath);
-  const scanIdx = state.algoScanIndex || 0;
-  const batchNum = Math.floor(scanIdx / ALGO_SCAN_BATCH_SIZE) + 1;
+  state.algoScanCount = (state.algoScanCount || 0) + 1;
+  const scanNum = state.algoScanCount;
 
   const tg = async (msg: string) => {
     if (botToken && chatId) {
@@ -971,12 +1008,14 @@ async function runAlgoScanCycle(
     }
   };
 
+  const allFiles = getScannableFiles(config.repoPath);
+
   // ── Layer 0: Scan Start ──
   await tg(
     [
-      `<b>🧮 Algo Correctness Scan #${batchNum}</b>`,
+      `<b>🧮 Algo Correctness Scan #${scanNum}</b>`,
       ``,
-      `Scanning ${ALGO_SCAN_BATCH_SIZE} files for algorithmic inconsistencies...`,
+      `Scanning <b>entire ODB repo</b> (${allFiles.length} files) for algorithmic inconsistencies...`,
       `<i>7-layer validation pipeline active</i>`,
       ``,
       `<i>Categories: numerical errors, logic bugs, statistical fallacies, concurrency, data integrity</i>`,
@@ -984,31 +1023,32 @@ async function runAlgoScanCycle(
   );
 
   try {
-    // ── Layer 1: MiniMax Expert Scan ──
-    const rawFindings = await runAlgoCorrectnessScan(
+    // ── Layer 1: MiniMax Expert Scan (whole repo, chunked) ──
+    const scanResult = await runAlgoCorrectnessScan(
       config.repoPath,
       minimaxKey,
-      state,
     );
+    const rawFindings = scanResult.findings;
 
     logger.info(
-      { findingCount: rawFindings.length },
-      'Algo scan Layer 1 (MiniMax) complete',
+      { findingCount: rawFindings.length, totalFiles: scanResult.totalFiles, chunks: scanResult.chunksScanned },
+      'Algo scan Layer 1 (MiniMax) complete — whole repo',
     );
 
     await tg(
       [
         `<b>🧮 Layer 1: MiniMax Expert Scan</b>`,
+        `• Scanned: <code>${scanResult.totalFiles}</code> files in <code>${scanResult.chunksScanned}</code> chunks`,
         `• Raw findings: <code>${rawFindings.length}</code>`,
         rawFindings.length > 0
           ? rawFindings.map((f) => `  → ${f.title.slice(0, 80)}`).join('\n')
-          : `  <i>No algo issues found in this batch</i>`,
+          : `  <i>No algo issues found across entire repo</i>`,
       ].join('\n'),
     );
 
     if (rawFindings.length === 0) {
       await tg(
-        `<b>🧮 Scan #${batchNum} Complete</b>\n\nNo findings — all ${ALGO_SCAN_BATCH_SIZE} files clean.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🧮 Scan #${scanNum} Complete</b>\n\nNo findings — all ${scanResult.totalFiles} files clean.\n<i>Next scan in ~4 hours</i>`,
       );
       return;
     }
@@ -1027,7 +1067,7 @@ async function runAlgoScanCycle(
 
     if (confidentFindings.length === 0) {
       await tg(
-        `<b>🧮 Scan #${batchNum} Complete</b>\n\nAll findings below confidence threshold.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings below confidence threshold.\n<i>Next scan in ~4 hours</i>`,
       );
       return;
     }
@@ -1060,27 +1100,20 @@ async function runAlgoScanCycle(
 
     if (afterFpFilter.length === 0) {
       await tg(
-        `<b>🧮 Scan #${batchNum} Complete</b>\n\nAll findings matched known FP patterns.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings matched known FP patterns.\n<i>Next scan in ~4 hours</i>`,
       );
       return;
     }
 
     // ── Layer 4: Consensus Round ──
-    const scannedFiles = getScannableFiles(config.repoPath);
-    const batchFiles: string[] = [];
-    for (let i = 0; i < ALGO_SCAN_BATCH_SIZE && i < scannedFiles.length; i++) {
-      batchFiles.push(
-        scannedFiles[
-          (scanIdx - ALGO_SCAN_BATCH_SIZE + i + scannedFiles.length) %
-            scannedFiles.length
-        ],
-      );
-    }
-
+    // For consensus, we pass the files relevant to each finding
+    const relevantFiles = [
+      ...new Set(afterFpFilter.flatMap((f) => f.files).filter(Boolean)),
+    ];
     const consensusFindings = await runConsensusRound(
       afterFpFilter,
       '',
-      batchFiles,
+      relevantFiles,
       minimaxKey,
       config.repoPath,
     );
@@ -1094,7 +1127,7 @@ async function runAlgoScanCycle(
 
     if (consensusFindings.length === 0) {
       await tg(
-        `<b>🧮 Scan #${batchNum} Complete</b>\n\nAll findings rejected at consensus.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings rejected at consensus.\n<i>Next scan in ~4 hours</i>`,
       );
       return;
     }
@@ -1102,7 +1135,7 @@ async function runAlgoScanCycle(
     // ── Layer 5: Devil's Advocate ──
     const advocateFindings = await runDevilsAdvocateRound(
       consensusFindings,
-      batchFiles,
+      relevantFiles,
       minimaxKey,
       config.repoPath,
     );
@@ -1116,7 +1149,7 @@ async function runAlgoScanCycle(
 
     if (advocateFindings.length === 0) {
       await tg(
-        `<b>🧮 Scan #${batchNum} Complete</b>\n\nAll findings disproved by devil's advocate.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings disproved by devil's advocate.\n<i>Next scan in ~4 hours</i>`,
       );
       return;
     }
@@ -1225,7 +1258,9 @@ async function runAlgoScanCycle(
 
     await tg(
       [
-        `<b>🧮 Algo Correctness Scan #${batchNum} Complete</b>`,
+        `<b>🧮 Algo Correctness Scan #${scanNum} Complete</b>`,
+        ``,
+        `<b>Scanned:</b> ${scanResult.totalFiles} files in ${scanResult.chunksScanned} chunks`,
         ``,
         `<b>Pipeline results:</b>`,
         `• Layer 1 (MiniMax Expert): <code>${rawFindings.length}</code> raw`,
@@ -2484,7 +2519,11 @@ ${provenanceSection}
 // Telemetry: NDJSON log of all Telegram messages for post-analysis
 const TELEMETRY_FILE = path.join(DATA_DIR, 'telegram-telemetry.ndjson');
 
-function logTelemetry(message: string, success: boolean, durationMs: number): void {
+function logTelemetry(
+  message: string,
+  success: boolean,
+  durationMs: number,
+): void {
   try {
     const plainText = message
       .replace(/<[^>]+>/g, '')
@@ -2861,7 +2900,7 @@ export interface OrchestratorConfig {
 
 /**
  * Run a proactive enhancement scan cycle.
- * Picks a batch of files, asks MiniMax for memory efficiency improvements,
+ * Scans the ENTIRE ODB repo for memory efficiency improvements,
  * then validates and creates issues through the standard pipeline.
  */
 async function runProactiveScanCycle(
@@ -2872,8 +2911,8 @@ async function runProactiveScanCycle(
   chatId: string,
 ): Promise<void> {
   const headCommit = getHeadCommit(config.repoPath);
-  const scanIdx = state.proactiveScanIndex || 0;
-  const batchNum = Math.floor(scanIdx / PROACTIVE_SCAN_BATCH_SIZE) + 1;
+  state.proactiveScanCount = (state.proactiveScanCount || 0) + 1;
+  const scanNum = state.proactiveScanCount;
 
   // Helper to send Telegram with layer info
   const tg = async (msg: string) => {
@@ -2882,12 +2921,14 @@ async function runProactiveScanCycle(
     }
   };
 
+  const allFiles = getScannableFiles(config.repoPath);
+
   // ── Layer 0: Scan Start ──
   await tg(
     [
-      `<b>🔍 Proactive Enhancement Scan #${batchNum}</b>`,
+      `<b>🔍 Proactive Enhancement Scan #${scanNum}</b>`,
       ``,
-      `Scanning ${PROACTIVE_SCAN_BATCH_SIZE} files for memory efficiency...`,
+      `Scanning <b>entire ODB repo</b> (${allFiles.length} files) for memory efficiency...`,
       `<i>7-layer validation pipeline active</i>`,
       ``,
       `<i>Categories: avoid copies, avoid allocation, cache efficiency, lazy evaluation</i>`,
@@ -2895,31 +2936,32 @@ async function runProactiveScanCycle(
   );
 
   try {
-    // ── Layer 1: MiniMax Expert Scan ──
-    const rawFindings = await runProactiveScan(
+    // ── Layer 1: MiniMax Expert Scan (whole repo, chunked) ──
+    const scanResult = await runProactiveScan(
       config.repoPath,
       minimaxKey,
-      state,
     );
+    const rawFindings = scanResult.findings;
 
     logger.info(
-      { findingCount: rawFindings.length },
-      'Proactive scan Layer 1 (MiniMax) complete',
+      { findingCount: rawFindings.length, totalFiles: scanResult.totalFiles, chunks: scanResult.chunksScanned },
+      'Proactive scan Layer 1 (MiniMax) complete — whole repo',
     );
 
     await tg(
       [
         `<b>🔍 Layer 1: MiniMax Expert Scan</b>`,
+        `• Scanned: <code>${scanResult.totalFiles}</code> files in <code>${scanResult.chunksScanned}</code> chunks`,
         `• Raw findings: <code>${rawFindings.length}</code>`,
         rawFindings.length > 0
           ? rawFindings.map((f) => `  → ${f.title.slice(0, 80)}`).join('\n')
-          : `  <i>No enhancement opportunities found in this batch</i>`,
+          : `  <i>No enhancement opportunities found across entire repo</i>`,
       ].join('\n'),
     );
 
     if (rawFindings.length === 0) {
       await tg(
-        `<b>🔍 Scan #${batchNum} Complete</b>\n\nNo findings — all ${PROACTIVE_SCAN_BATCH_SIZE} files clean.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🔍 Scan #${scanNum} Complete</b>\n\nNo findings — all ${scanResult.totalFiles} files clean.\n<i>Next scan in ~4 hours</i>`,
       );
       return;
     }
@@ -2943,7 +2985,7 @@ async function runProactiveScanCycle(
 
     if (confidentFindings.length === 0) {
       await tg(
-        `<b>🔍 Scan #${batchNum} Complete</b>\n\nAll findings below confidence threshold.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings below confidence threshold.\n<i>Next scan in ~4 hours</i>`,
       );
       return;
     }
@@ -2976,32 +3018,19 @@ async function runProactiveScanCycle(
 
     if (afterFpFilter.length === 0) {
       await tg(
-        `<b>🔍 Scan #${batchNum} Complete</b>\n\nAll findings matched known FP patterns.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings matched known FP patterns.\n<i>Next scan in ~4 hours</i>`,
       );
       return;
     }
 
     // ── Layer 4: Consensus Round (skeptical MiniMax reviewer) ──
-    // For proactive scans, the "changedFiles" are the scanned files
-    const scannedFiles = getScannableFiles(config.repoPath);
-    const batchFiles: string[] = [];
-    for (
-      let i = 0;
-      i < PROACTIVE_SCAN_BATCH_SIZE && i < scannedFiles.length;
-      i++
-    ) {
-      batchFiles.push(
-        scannedFiles[
-          (scanIdx - PROACTIVE_SCAN_BATCH_SIZE + i + scannedFiles.length) %
-            scannedFiles.length
-        ],
-      );
-    }
-
+    const relevantFiles = [
+      ...new Set(afterFpFilter.flatMap((f) => f.files).filter(Boolean)),
+    ];
     const consensusFindings = await runConsensusRound(
       afterFpFilter,
       '', // no diff for proactive scans
-      batchFiles,
+      relevantFiles,
       minimaxKey,
       config.repoPath,
     );
@@ -3020,7 +3049,7 @@ async function runProactiveScanCycle(
 
     if (consensusFindings.length === 0) {
       await tg(
-        `<b>🔍 Scan #${batchNum} Complete</b>\n\nAll findings rejected at consensus.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings rejected at consensus.\n<i>Next scan in ~4 hours</i>`,
       );
       return;
     }
@@ -3028,7 +3057,7 @@ async function runProactiveScanCycle(
     // ── Layer 5: Devil's Advocate (tries to DISPROVE each finding) ──
     const advocateFindings = await runDevilsAdvocateRound(
       consensusFindings,
-      batchFiles,
+      relevantFiles,
       minimaxKey,
       config.repoPath,
     );
@@ -3047,7 +3076,7 @@ async function runProactiveScanCycle(
 
     if (advocateFindings.length === 0) {
       await tg(
-        `<b>🔍 Scan #${batchNum} Complete</b>\n\nAll findings disproved by devil's advocate.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings disproved by devil's advocate.\n<i>Next scan in ~4 hours</i>`,
       );
       return;
     }
@@ -3155,7 +3184,9 @@ async function runProactiveScanCycle(
     // ── Final Summary ──
     await tg(
       [
-        `<b>🔍 Proactive Scan #${batchNum} Complete</b>`,
+        `<b>🔍 Proactive Scan #${scanNum} Complete</b>`,
+        ``,
+        `<b>Scanned:</b> ${scanResult.totalFiles} files in ${scanResult.chunksScanned} chunks`,
         ``,
         `<b>Pipeline results:</b>`,
         `• Layer 1 (MiniMax Expert): <code>${rawFindings.length}</code> raw`,
