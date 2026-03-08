@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Phase 1-5: Full release orchestration (preflight → version → sync → verify → postflight)"
+#MISE description="Full release orchestration (preflight → version → sync → verify → postflight)"
 #MISE depends=["release:preflight"]
 
 set -euo pipefail
@@ -9,10 +9,7 @@ echo "NanoClaw Full Release Pipeline"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 
-# Phase 1: Preflight (already run via depends, but explicit for clarity)
-echo "[1/5] Running preflight checks..."
-mise run release:preflight
-echo ""
+# Phase 1: Preflight already ran via depends
 
 # Phase 2: Version
 echo "[2/5] Bumping version with semantic-release..."

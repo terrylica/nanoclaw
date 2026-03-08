@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Phase 2: Bump version and generate changelog via semantic-release"
-#MISE depends=["release:preflight"]
+# No depends — called by release:full which handles preflight
 
 set -euo pipefail
 

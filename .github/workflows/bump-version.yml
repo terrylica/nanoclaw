@@ -1,32 +1,18 @@
-name: Bump version
+name: Bump version (DISABLED — superseded by semantic-release)
+
+# This workflow is disabled. Version bumping is now handled by
+# semantic-release via `mise run release:full` (local execution).
+# See .releaserc.yml for configuration.
+#
+# Original trigger: push to main touching src/** or container/**
+# Original action: npm version patch + commit + push
 
 on:
-  push:
-    branches: [main]
-    paths: ['src/**', 'container/**']
+  workflow_dispatch: {}  # manual-only, effectively disabled
 
 jobs:
   bump-version:
+    if: false  # never runs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/create-github-app-token@v1
-        id: app-token
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-
-      - name: Bump patch version
-        run: |
-          npm version patch --no-git-tag-version
-          git add package.json package-lock.json
-          git diff --cached --quiet && exit 0
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          VERSION=$(node -p "require('./package.json').version")
-          git commit -m "chore: bump version to $VERSION"
-          git pull --rebase
-          git push
+      - run: echo "Superseded by semantic-release"

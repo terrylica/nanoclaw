@@ -31,13 +31,29 @@ if [[ "$BRANCH" != "main" ]]; then
     exit 1
 fi
 
-# 4. Install/verify semantic-release and plugins
-echo "Installing semantic-release..."
-npm install --save-dev semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github
+# 4. Verify semantic-release is installed (deps should already be committed)
+if ! npm ls semantic-release >/dev/null 2>&1; then
+    echo "FAIL: semantic-release not installed. Run: npm install"
+    exit 1
+fi
 
-# 5. Verify Node.js version
-NODE_VERSION=$(node -v)
-echo "Node.js version: $NODE_VERSION"
+# 5. Verify GH_TOKEN is available for GitHub release creation
+if [[ -z "${GH_TOKEN:-}" ]] && ! gh auth status >/dev/null 2>&1; then
+    echo "FAIL: No GitHub authentication (set GH_TOKEN or run gh auth login)"
+    exit 1
+fi
 
+# 6. Verify TypeScript compiles
+echo "Checking TypeScript compilation..."
+npx tsc --noEmit
+
+# 7. Reset lockfile drift (artifact from prior npm/uv/cargo operations)
+LOCKFILE_DRIFT=$(git diff --name-only | grep -E '^(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb)$' || true)
+if [[ -n "$LOCKFILE_DRIFT" ]]; then
+    echo "Resetting lockfile drift (build artifact)"
+    echo "$LOCKFILE_DRIFT" | xargs git checkout --
+fi
+
+echo "Node.js version: $(node -v)"
 echo ""
 echo "✓ Preflight PASSED — ready to release"
