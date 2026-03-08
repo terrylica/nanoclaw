@@ -24,12 +24,32 @@ import { suggestLabels } from './github-issues.js';
 import { createGitHubIssue } from './github-issues.js';
 import { saveState, checkRateLimit } from './state.js';
 import { issueExistsFuzzy } from './github-issues.js';
-import { CHUNK_CHAR_BUDGET, PER_FILE_TRUNCATE, traceId } from './types.js';
+import {
+  ALGO_SCAN_INTERVAL_MS,
+  CHUNK_CHAR_BUDGET,
+  PER_FILE_TRUNCATE,
+  PROACTIVE_SCAN_INTERVAL_MS,
+  traceId,
+} from './types.js';
 import type {
   Finding,
   OrchestratorConfig,
   OrchestratorState,
 } from './types.js';
+
+/**
+ * Format remaining time until next scan as human-readable string.
+ * Uses scan start time + interval to compute when the next scan will fire.
+ */
+function formatNextScan(scanStartTime: number, intervalMs: number): string {
+  const nextAt = scanStartTime + intervalMs;
+  const remainMs = Math.max(0, nextAt - Date.now());
+  const remainMin = Math.round(remainMs / 60_000);
+  if (remainMin < 60) return `~${remainMin}m`;
+  const h = Math.floor(remainMin / 60);
+  const m = remainMin % 60;
+  return m > 0 ? `~${h}h ${m}m` : `~${h}h`;
+}
 
 // --- Scanning Prompts ---
 
@@ -318,10 +338,12 @@ export async function runAlgoScanCycle(
   botToken: string,
   chatId: string,
 ): Promise<void> {
+  const scanStart = Date.now();
   const headCommit = getHeadCommit(config.repoPath);
   state.algoScanCount = (state.algoScanCount || 0) + 1;
   const scanNum = state.algoScanCount;
   const tid = traceId();
+  const nextIn = () => formatNextScan(scanStart, ALGO_SCAN_INTERVAL_MS);
 
   const tg = async (msg: string) => {
     if (botToken && chatId) {
@@ -375,7 +397,7 @@ export async function runAlgoScanCycle(
 
     if (rawFindings.length === 0) {
       await tg(
-        `<b>🧮 Scan #${scanNum} Complete</b>\n\nNo findings — all ${scanResult.totalFiles} files clean.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🧮 Scan #${scanNum} Complete</b>\n\nNo findings — all ${scanResult.totalFiles} files clean.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -411,7 +433,7 @@ export async function runAlgoScanCycle(
 
     if (selfValidatedFindings.length === 0) {
       await tg(
-        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll ${rawFindings.length} findings disproved during self-validation.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll ${rawFindings.length} findings disproved during self-validation.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -430,7 +452,7 @@ export async function runAlgoScanCycle(
 
     if (confidentFindings.length === 0) {
       await tg(
-        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings below confidence threshold.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings below confidence threshold.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -463,7 +485,7 @@ export async function runAlgoScanCycle(
 
     if (afterFpFilter.length === 0) {
       await tg(
-        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings matched known FP patterns.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings matched known FP patterns.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -489,7 +511,7 @@ export async function runAlgoScanCycle(
 
     if (consensusFindings.length === 0) {
       await tg(
-        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings rejected at consensus.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings rejected at consensus.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -511,7 +533,7 @@ export async function runAlgoScanCycle(
 
     if (advocateFindings.length === 0) {
       await tg(
-        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings disproved by devil's advocate.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🧮 Scan #${scanNum} Complete</b>\n\nAll findings disproved by devil's advocate.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -636,7 +658,7 @@ export async function runAlgoScanCycle(
           ? `• Skipped: ${scanSkipped.length} (${scanSkipped.slice(0, 3).join(', ')}${scanSkipped.length > 3 ? '...' : ''})`
           : '',
         ``,
-        `<i>Next algo scan in ~4 hours</i>`,
+        `<i>Next algo scan in ${nextIn()}</i>`,
       ]
         .filter(Boolean)
         .join('\n'),
@@ -644,7 +666,7 @@ export async function runAlgoScanCycle(
   } catch (err) {
     logger.warn({ err }, 'Algo correctness scan cycle failed (non-fatal)');
     await tg(
-      `<b>🧮 Algo Scan Failed ⚠️</b>\n<i>${String(err).slice(0, 200)}</i>\n\n<i>Will retry in ~4 hours</i>`,
+      `<b>🧮 Algo Scan Failed ⚠️</b>\n<i>${String(err).slice(0, 200)}</i>\n\n<i>Will retry in ${nextIn()}</i>`,
     );
   }
 
@@ -662,10 +684,12 @@ export async function runProactiveScanCycle(
   botToken: string,
   chatId: string,
 ): Promise<void> {
+  const scanStart = Date.now();
   const headCommit = getHeadCommit(config.repoPath);
   state.proactiveScanCount = (state.proactiveScanCount || 0) + 1;
   const scanNum = state.proactiveScanCount;
   const tid = traceId();
+  const nextIn = () => formatNextScan(scanStart, PROACTIVE_SCAN_INTERVAL_MS);
 
   const tg = async (msg: string) => {
     if (botToken && chatId) {
@@ -716,7 +740,7 @@ export async function runProactiveScanCycle(
 
     if (rawFindings.length === 0) {
       await tg(
-        `<b>🔍 Scan #${scanNum} Complete</b>\n\nNo findings — all ${scanResult.totalFiles} files clean.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🔍 Scan #${scanNum} Complete</b>\n\nNo findings — all ${scanResult.totalFiles} files clean.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -747,7 +771,7 @@ export async function runProactiveScanCycle(
 
     if (selfValidatedFindings.length === 0) {
       await tg(
-        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings disproved during self-validation.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings disproved during self-validation.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -771,7 +795,7 @@ export async function runProactiveScanCycle(
 
     if (confidentFindings.length === 0) {
       await tg(
-        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings below confidence threshold.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings below confidence threshold.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -804,7 +828,7 @@ export async function runProactiveScanCycle(
 
     if (afterFpFilter.length === 0) {
       await tg(
-        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings matched known FP patterns.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings matched known FP patterns.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -835,7 +859,7 @@ export async function runProactiveScanCycle(
 
     if (consensusFindings.length === 0) {
       await tg(
-        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings rejected at consensus.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings rejected at consensus.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -862,7 +886,7 @@ export async function runProactiveScanCycle(
 
     if (advocateFindings.length === 0) {
       await tg(
-        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings disproved by devil's advocate.\n<i>Next scan in ~4 hours</i>`,
+        `<b>🔍 Scan #${scanNum} Complete</b>\n\nAll findings disproved by devil's advocate.\n<i>Next scan in ${nextIn()}</i>`,
       );
       return;
     }
@@ -983,7 +1007,7 @@ export async function runProactiveScanCycle(
           ? `• Skipped: ${scanSkipped.length} (${scanSkipped.slice(0, 3).join(', ')}${scanSkipped.length > 3 ? '...' : ''})`
           : '',
         ``,
-        `<i>Next proactive scan in ~4 hours</i>`,
+        `<i>Next proactive scan in ${nextIn()}</i>`,
       ]
         .filter(Boolean)
         .join('\n'),
@@ -991,7 +1015,7 @@ export async function runProactiveScanCycle(
   } catch (err) {
     logger.warn({ err }, 'Proactive scan cycle failed (non-fatal)');
     await tg(
-      `<b>🔍 Proactive Scan Failed ⚠️</b>\n<i>${String(err).slice(0, 200)}</i>\n\n<i>Will retry in ~4 hours</i>`,
+      `<b>🔍 Proactive Scan Failed ⚠️</b>\n<i>${String(err).slice(0, 200)}</i>\n\n<i>Will retry in ${nextIn()}</i>`,
     );
   }
 
