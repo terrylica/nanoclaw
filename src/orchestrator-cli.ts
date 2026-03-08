@@ -5,7 +5,7 @@
  *
  * Usage: node dist/orchestrator-cli.js [--repo /path/to/opendeviationbar-py]
  */
-import { startOrchestratorLoop } from './orchestrator.js';
+import { startOrchestratorLoop } from './orchestrator/index.js';
 import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
 
