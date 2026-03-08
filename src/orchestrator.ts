@@ -2270,13 +2270,23 @@ async function runClaudeMdMaintenance(
   }
 
   try {
-    const result = spawnSync('claude', ['-p', '--output-format', 'text'], {
-      input: prompt,
-      cwd: repoPath,
-      encoding: 'utf-8',
-      timeout: CLAUDE_MD_MAINTENANCE_TIMEOUT_MS,
-      maxBuffer: 2 * 1024 * 1024,
-    });
+    const result = spawnSync(
+      'claude',
+      [
+        '-p',
+        '--output-format',
+        'text',
+        '--allowedTools',
+        'Edit,Write,Read,Glob,Grep',
+      ],
+      {
+        input: prompt,
+        cwd: repoPath,
+        encoding: 'utf-8',
+        timeout: CLAUDE_MD_MAINTENANCE_TIMEOUT_MS,
+        maxBuffer: 2 * 1024 * 1024,
+      },
+    );
 
     if (result.error || result.status !== 0) {
       logger.error(
