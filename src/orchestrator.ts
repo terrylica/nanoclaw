@@ -3,11 +3,13 @@
  *
  * Continuous diff-driven validation of opendeviationbar-py:
  * 1. git pull → git diff since last check
- * 2. MiniMax M2.5-highspeed triages changed files
- * 3. For each concern → spawn Claude container to validate
- * 4. Confirmed findings → GitHub Issue + Telegram notification
+ * 2. MiniMax M2.5-highspeed triages changed files (cheap, fast)
+ * 3. Claude Code validates each finding via `claude -p` (deep, subscription)
+ * 4. Only confirmed findings → GitHub Issue + Telegram notification
+ *
+ * Safety: rate limiting, fuzzy dedup, exponential backoff, severity gating.
  */
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -20,15 +22,36 @@ import { DATA_DIR } from './config.js';
 const MINIMAX_MODEL = 'MiniMax-M2.5-highspeed';
 const MINIMAX_BASE_URL = 'https://api.minimax.io/anthropic';
 const HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-const CYCLE_COOLDOWN_MS = 5_000; // 5s between cycles when no changes
+const CYCLE_COOLDOWN_MS = 30_000; // 30s between cycles when no changes
+const CYCLE_COOLDOWN_ERROR_MS = 60_000; // 60s after errors
 const STATE_FILE = path.join(DATA_DIR, 'orchestrator-state.json');
+
+// Rate limiting
+const MAX_ISSUES_PER_HOUR = 6;
+const MAX_FINDINGS_PER_CYCLE = 5;
+const MIN_SEVERITY_FOR_ISSUE = 'medium'; // skip low-severity findings
+
+// Claude validation timeout (5 min per finding)
+const CLAUDE_VALIDATION_TIMEOUT_MS = 5 * 60 * 1000;
+
+// Label cache: avoid fetching labels every cycle (cc-skills pattern: 24-hour cache)
+let cachedRepoLabels: string[] | null = null;
+let labelsCacheTime = 0;
+const LABEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// --- Types ---
 
 interface OrchestratorState {
   lastCheckedCommit: string;
   cycleCount: number;
   issuesCreated: number;
+  issuesCreatedThisHour: number;
+  hourWindow: string; // ISO timestamp of current hour window
   lastHeartbeat: string;
   startedAt: string;
+  consecutiveErrors: number;
+  findingsValidated: number;
+  findingsRejected: number;
 }
 
 interface Finding {
@@ -38,6 +61,15 @@ interface Finding {
   description: string;
   files: string[];
   validation: string;
+  /** Which expert perspectives flagged this finding (populated during triage) */
+  sourcePerspectives?: string[];
+}
+
+interface ValidationResult {
+  confirmed: boolean;
+  confidence: 'low' | 'medium' | 'high';
+  analysis: string;
+  suggestedFix?: string;
 }
 
 interface TriageResult {
@@ -48,25 +80,43 @@ interface TriageResult {
 // --- State ---
 
 function loadState(): OrchestratorState {
+  const defaults: OrchestratorState = {
+    lastCheckedCommit: '',
+    cycleCount: 0,
+    issuesCreated: 0,
+    issuesCreatedThisHour: 0,
+    hourWindow: '',
+    lastHeartbeat: '',
+    startedAt: new Date().toISOString(),
+    consecutiveErrors: 0,
+    findingsValidated: 0,
+    findingsRejected: 0,
+  };
   try {
     if (fs.existsSync(STATE_FILE)) {
-      return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+      const saved = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+      // Merge saved state with defaults to handle new fields
+      return { ...defaults, ...saved };
     }
   } catch {
     logger.warn('Corrupted orchestrator state, resetting');
   }
-  return {
-    lastCheckedCommit: '',
-    cycleCount: 0,
-    issuesCreated: 0,
-    lastHeartbeat: '',
-    startedAt: new Date().toISOString(),
-  };
+  return defaults;
 }
 
 function saveState(state: OrchestratorState): void {
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+}
+
+/** Check and update hourly rate limit window */
+function checkRateLimit(state: OrchestratorState): boolean {
+  const currentHour = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH
+  if (state.hourWindow !== currentHour) {
+    state.hourWindow = currentHour;
+    state.issuesCreatedThisHour = 0;
+  }
+  return state.issuesCreatedThisHour < MAX_ISSUES_PER_HOUR;
 }
 
 // --- Git Operations ---
@@ -105,11 +155,10 @@ function getGitBranch(repoPath: string): string {
 
 function getDiff(repoPath: string, sinceCommit: string): string {
   try {
-    const diff = execSync(
+    return execSync(
       `git diff ${sinceCommit}..HEAD --stat --unified=5 -- '*.rs' '*.py' '*.toml' '*.cfg'`,
       { cwd: repoPath, encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 },
     );
-    return diff;
   } catch (err) {
     logger.error({ err }, 'git diff failed');
     return '';
@@ -133,10 +182,21 @@ function getChangedFiles(repoPath: string, sinceCommit: string): string[] {
 
 function getCommitLog(repoPath: string, sinceCommit: string): string {
   try {
-    return execSync(
-      `git log ${sinceCommit}..HEAD --oneline --no-merges`,
-      { cwd: repoPath, encoding: 'utf-8', maxBuffer: 1024 * 1024 },
-    ).trim();
+    return execSync(`git log ${sinceCommit}..HEAD --oneline --no-merges`, {
+      cwd: repoPath,
+      encoding: 'utf-8',
+      maxBuffer: 1024 * 1024,
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+/** Read file content from the repo for validation context */
+function readRepoFile(repoPath: string, filePath: string): string {
+  try {
+    const fullPath = path.join(repoPath, filePath);
+    return fs.readFileSync(fullPath, 'utf-8');
   } catch {
     return '';
   }
@@ -147,56 +207,167 @@ function getCommitLog(repoPath: string, sinceCommit: string): string {
 async function queryMiniMax(
   prompt: string,
   apiKey: string,
+  systemPrompt = '',
 ): Promise<string> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
+  const timer = setTimeout(() => controller.abort(), 60_000);
 
   try {
+    const body: Record<string, unknown> = {
+      model: MINIMAX_MODEL,
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: prompt }],
+    };
+    if (systemPrompt) {
+      body.system = systemPrompt;
+    }
+
     const response = await fetch(`${MINIMAX_BASE_URL}/v1/messages`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        'x-api-key': apiKey,
+        'anthropic-version': '2024-10-22',
       },
-      body: JSON.stringify({
-        model: MINIMAX_MODEL,
-        max_tokens: 4096,
-        messages: [{ role: 'user', content: prompt }],
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
 
     clearTimeout(timer);
 
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(`MiniMax API ${response.status}: ${body.slice(0, 200)}`);
+      const respBody = await response.text().catch(() => '');
+      throw new Error(
+        `MiniMax API ${response.status}: ${respBody.slice(0, 200)}`,
+      );
     }
 
     const data = (await response.json()) as {
-      content: Array<{ type: string; text: string }>;
+      content: Array<{ type: string; text?: string }>;
     };
-    return data.content?.[0]?.text || '';
+    // Filter out thinking blocks — MiniMax returns thinking before text
+    const textBlocks = data.content.filter(
+      (b) => b.type === 'text' && b.text,
+    );
+    return textBlocks.map((b) => b.text!).join('');
   } catch (err) {
     clearTimeout(timer);
     throw err;
   }
 }
 
+// --- Multi-Perspective MiniMax Triage ---
+//
+// MiniMax is extremely cheap (~$0.01/call), so we run multiple expert
+// perspectives in parallel, aggregate findings, deduplicate, and only
+// then hand off to Claude Code for expensive validation.
+
+interface ExpertPerspective {
+  name: string;
+  systemPrompt: string;
+}
+
+const EXPERT_RESPONSE_FORMAT = `
+Respond with a JSON array of findings. Each finding has:
+- type: one of [bug, performance-regression, test-gap, daemon-behavior]
+- severity: low | medium | high | critical
+- title: concise, unique, specific (not generic)
+- description: 2-3 sentences explaining the concern and its impact
+- files: array of affected file paths
+- validation: shell command to verify
+
+If nothing warrants attention, respond with: []
+
+JSON:`;
+
+const EXPERT_PERSPECTIVES: ExpertPerspective[] = [
+  {
+    name: 'bug-hunter',
+    systemPrompt: `You are a bug hunter specializing in Rust and Python code. You look for:
+- Logic errors that produce incorrect results
+- Off-by-one errors, boundary conditions, integer overflow
+- Unsafe unwrap/expect without proper error context
+- Race conditions in async/concurrent code
+- Null/None handling gaps, missing match arms
+- Error handling that swallows important context
+- Incorrect type conversions or lossy casts
+
+Target: opendeviationbar-py, a Rust+Python (maturin) library for financial microstructure analysis with 10 Rust crates and 4 Python daemons.
+
+Be thorough but precise. Only report genuine bugs, not style preferences.
+${EXPERT_RESPONSE_FORMAT}`,
+  },
+  {
+    name: 'performance-analyst',
+    systemPrompt: `You are a performance engineer specializing in Rust and Python systems that handle financial data at scale. You look for:
+- Memory allocation patterns that could cause OOM (unbounded Vec growth, large String clones)
+- O(n²) or worse algorithms where O(n) is possible
+- Unnecessary heap allocations in hot paths (String where &str suffices)
+- Python GIL contention patterns
+- Inefficient I/O patterns (sync in async context, unbuffered writes, N+1 queries)
+- Memory leaks (growing caches without eviction, accumulating state)
+- Parquet/Arrow inefficiencies (unnecessary copies, column projection misses)
+
+Target: opendeviationbar-py, a Rust+Python (maturin) library processing large volumes of financial tick data.
+
+Focus on changes that could cause 2x+ degradation. Ignore micro-optimizations.
+${EXPERT_RESPONSE_FORMAT}`,
+  },
+  {
+    name: 'reliability-engineer',
+    systemPrompt: `You are a site reliability engineer reviewing code for a 24/7 financial data processing system. You look for:
+- Daemon behavior: reconnect logic, graceful shutdown, state persistence across restarts
+- Backpressure handling: what happens when downstream is slow or offline
+- Data integrity: silent data loss, partial writes, gap detection failures
+- Error propagation: exceptions caught but not logged, errors mapped to wrong severity
+- Resource exhaustion: file descriptor leaks, connection pool starvation, disk space
+- Monitoring gaps: important operations without metrics/logging
+- Configuration: hardcoded timeouts, missing fallbacks for external dependencies
+
+Target: opendeviationbar-py runs 4 Python daemons (gap-backfill, kintsugi, sidecar, stathera) continuously in production.
+
+Focus on issues that could cause production incidents or silent data corruption.
+${EXPERT_RESPONSE_FORMAT}`,
+  },
+  {
+    name: 'test-coverage-auditor',
+    systemPrompt: `You are a test coverage auditor. For each code change, you evaluate:
+- Are new code paths tested? (new functions, new branches, new error paths)
+- Are edge cases covered? (empty inputs, boundary values, error conditions)
+- Are integration points tested? (API endpoints, database queries, external calls)
+- Do existing tests still cover the modified behavior? (semantic changes vs. just refactors)
+- Are there regression risks? (behavior changes without test updates)
+
+Target: opendeviationbar-py uses cargo nextest (Rust) and pytest (Python).
+
+Only report SIGNIFICANT test gaps — missing tests for critical logic, not trivial getters.
+Only report type "test-gap" findings.
+${EXPERT_RESPONSE_FORMAT}`,
+  },
+  {
+    name: 'security-reviewer',
+    systemPrompt: `You are a security reviewer for financial infrastructure code. You look for:
+- Input validation gaps on API endpoints (HTTP, CLI, config files)
+- Injection vulnerabilities (SQL, command, path traversal)
+- Authentication/authorization bypasses
+- Sensitive data in logs, error messages, or stack traces
+- Insecure defaults (open network listeners, permissive CORS)
+- Cryptographic misuse
+- Dependency confusion or supply chain risks in config changes
+
+Target: opendeviationbar-py exposes HTTP APIs via sidecar and handles financial data.
+
+Only report genuine security concerns, not theoretical risks.
+${EXPERT_RESPONSE_FORMAT}`,
+  },
+];
+
 function buildTriagePrompt(
   diff: string,
   commitLog: string,
   changedFiles: string[],
 ): string {
-  return `You are a code quality analyst for opendeviationbar-py, a Rust+Python (maturin) library for financial microstructure analysis. It has 10 Rust crates and 4 Python daemons (gap-backfill, kintsugi, sidecar, stathera).
-
-Analyze the following git changes and identify concerns across these 4 categories:
-1. **bug**: Logic errors, unsafe patterns, error handling gaps, dead code
-2. **performance-regression**: Patterns that could cause OOM, slowdowns, unnecessary allocations
-3. **test-gap**: Changed code paths with no test coverage
-4. **daemon-behavior**: Issues specific to daemon operation (reconnect, backpressure, data gaps, heartbeat)
-
-CHANGED FILES:
+  return `CHANGED FILES:
 ${changedFiles.join('\n')}
 
 COMMIT LOG:
@@ -205,105 +376,727 @@ ${commitLog}
 DIFF:
 ${diff.slice(0, 50_000)}
 
-Respond with a JSON array of findings. Each finding has: type, severity (low/medium/high/critical), title (concise), description (1-2 sentences), files (array of paths), validation (shell command to verify).
-
-If no concerns found, respond with an empty array: []
-
-IMPORTANT: Only report genuine concerns. False positives waste engineering time. When in doubt, skip it.
-
 JSON:`;
 }
 
-async function triageChanges(
-  diff: string,
-  commitLog: string,
-  changedFiles: string[],
-  apiKey: string,
-): Promise<TriageResult> {
-  const prompt = buildTriagePrompt(diff, commitLog, changedFiles);
-  const raw = await queryMiniMax(prompt, apiKey);
-
-  // Parse JSON from response (may have markdown fences)
+/** Parse a MiniMax response into findings array */
+function parseMiniMaxFindings(raw: string): Finding[] {
   let jsonStr = raw.trim();
+
+  // Extract from markdown fences
   const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch) {
     jsonStr = fenceMatch[1].trim();
   }
 
+  // Extract JSON array — MiniMax may append explanation after it
+  const arrayMatch = jsonStr.match(/(\[[\s\S]*?\])(?:\s*\n|$)/);
+  if (arrayMatch) {
+    jsonStr = arrayMatch[1];
+  }
+
   try {
-    const findings: Finding[] = JSON.parse(jsonStr);
-    return {
-      findings: Array.isArray(findings) ? findings : [],
-      summary: `${findings.length} concern(s) found`,
-    };
+    const parsed = JSON.parse(jsonStr);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    logger.warn({ raw: raw.slice(0, 500) }, 'Failed to parse MiniMax triage response');
-    return { findings: [], summary: 'Parse error' };
+    return [];
   }
 }
 
-// --- GitHub Issue Creation ---
+/** Deduplicate findings across perspectives using title word similarity */
+function deduplicateFindings(allFindings: Finding[]): Finding[] {
+  const unique: Finding[] = [];
 
-function createGitHubIssue(
+  for (const finding of allFindings) {
+    const dupeIndex = unique.findIndex((existing) => {
+      const existingWords = extractWords(existing.title);
+      const newWords = extractWords(finding.title);
+      const intersection = newWords.filter((w) => existingWords.includes(w));
+      const union = new Set([...existingWords, ...newWords]);
+      return union.size > 0 && intersection.length / union.size >= 0.4;
+    });
+
+    if (dupeIndex >= 0) {
+      // Merge perspective tags from duplicate into the kept finding
+      const existing = unique[dupeIndex];
+      const newPerspectives = finding.sourcePerspectives || [];
+      existing.sourcePerspectives = [
+        ...new Set([...(existing.sourcePerspectives || []), ...newPerspectives]),
+      ];
+      // Upgrade severity if duplicate has higher severity
+      if (severityRank(finding.severity) > severityRank(existing.severity)) {
+        existing.severity = finding.severity;
+      }
+    } else {
+      unique.push(finding);
+    }
+  }
+
+  return unique;
+}
+
+/**
+ * Multi-perspective MiniMax triage.
+ * Runs 5 expert perspectives in parallel, aggregates findings,
+ * deduplicates, filters by severity, and returns the top findings.
+ */
+async function triageChanges(
+  diff: string,
+  commitLog: string,
+  changedFiles: string[],
+  apiKey: string,
+  repoPath: string,
+): Promise<TriageResult> {
+  const prompt = buildTriagePrompt(diff, commitLog, changedFiles);
+
+  // Run all expert perspectives in parallel (~$0.05 total, ~15s wall time)
+  const perspectiveResults = await Promise.allSettled(
+    EXPERT_PERSPECTIVES.map(async (expert) => {
+      const t0 = Date.now();
+      try {
+        const raw = await queryMiniMax(prompt, apiKey, expert.systemPrompt);
+        const findings = parseMiniMaxFindings(raw);
+        const durationMs = Date.now() - t0;
+        logger.info(
+          { expert: expert.name, findings: findings.length, durationMs },
+          'Expert perspective complete',
+        );
+        return { expert: expert.name, findings, raw };
+      } catch (err) {
+        logger.warn(
+          { expert: expert.name, err, durationMs: Date.now() - t0 },
+          'Expert perspective failed',
+        );
+        return { expert: expert.name, findings: [] as Finding[], raw: '' };
+      }
+    }),
+  );
+
+  // Collect all findings across perspectives, tagging each with its source
+  const allFindings: Finding[] = [];
+  const perspectiveSummaries: string[] = [];
+
+  for (const result of perspectiveResults) {
+    if (result.status === 'fulfilled') {
+      const { expert, findings } = result.value;
+      perspectiveSummaries.push(`${expert}:${findings.length}`);
+      for (const f of findings) {
+        f.sourcePerspectives = [expert];
+      }
+      allFindings.push(...findings);
+    }
+  }
+
+  logger.info(
+    { perspectives: perspectiveSummaries.join(', '), totalRaw: allFindings.length },
+    'All expert perspectives collected',
+  );
+
+  // Deduplicate across perspectives
+  const deduped = deduplicateFindings(allFindings);
+
+  // Filter: only medium+ severity, max 5, sort by severity desc
+  const filtered = deduped
+    .filter((f) => severityRank(f.severity) >= severityRank(MIN_SEVERITY_FOR_ISSUE))
+    .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
+    .slice(0, MAX_FINDINGS_PER_CYCLE);
+
+  // If we have findings, do a MiniMax consensus round to eliminate obvious false positives
+  if (filtered.length > 0) {
+    const consensusFindings = await runConsensusRound(
+      filtered,
+      diff,
+      changedFiles,
+      apiKey,
+      repoPath,
+    );
+    return {
+      findings: consensusFindings,
+      summary: `${allFindings.length} raw → ${deduped.length} deduped → ${filtered.length} filtered → ${consensusFindings.length} after consensus`,
+    };
+  }
+
+  return {
+    findings: filtered,
+    summary: `${allFindings.length} raw → ${deduped.length} deduped → ${filtered.length} after filtering`,
+  };
+}
+
+/**
+ * MiniMax consensus round: present all findings to a fresh MiniMax call
+ * that acts as a skeptical reviewer. Cheap (~$0.01) second opinion
+ * before we spend ~$0.05/finding on Claude validation.
+ */
+async function runConsensusRound(
+  findings: Finding[],
+  diff: string,
+  changedFiles: string[],
+  apiKey: string,
+  repoPath: string,
+): Promise<Finding[]> {
+  // Read source files for context
+  const fileContents = changedFiles
+    .slice(0, 5) // limit to 5 files
+    .map((f) => {
+      const content = readRepoFile(repoPath, f);
+      if (!content) return '';
+      return `--- ${f} ---\n${content.slice(0, 8_000)}\n`;
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  const consensusPrompt = `You are a skeptical senior engineer reviewing findings from automated code analysis.
+
+FINDINGS TO REVIEW:
+${JSON.stringify(findings, null, 2)}
+
+CHANGED FILES:
+${changedFiles.join('\n')}
+
+RELEVANT SOURCE CODE:
+${fileContents.slice(0, 30_000)}
+
+DIFF:
+${diff.slice(0, 20_000)}
+
+For each finding, determine if it is:
+1. VALID — a genuine concern that should be investigated
+2. FALSE_POSITIVE — incorrect, already handled, or by design
+
+Respond with a JSON array containing ONLY the valid findings (copy them exactly).
+If ALL findings are false positives, respond with: []
+
+Be skeptical. A finding is only valid if you can see the actual problem in the source code.
+
+JSON:`;
+
+  const consensusSystem = `You are a senior engineer at a financial data company reviewing automated code analysis findings. Your job is to eliminate false positives by cross-referencing findings against the actual source code. You are conservative — when in doubt, keep the finding.`;
+
+  try {
+    const raw = await queryMiniMax(consensusPrompt, apiKey, consensusSystem);
+    const consensusFindings = parseMiniMaxFindings(raw);
+
+    logger.info(
+      { input: findings.length, output: consensusFindings.length },
+      'Consensus round complete',
+    );
+
+    // If consensus returned findings, use those. Otherwise keep originals
+    // (don't let a parse failure drop everything)
+    if (raw.trim().startsWith('[')) {
+      return consensusFindings;
+    }
+    return findings;
+  } catch (err) {
+    logger.warn({ err }, 'Consensus round failed, keeping original findings');
+    return findings;
+  }
+}
+
+function severityRank(s: string): number {
+  const ranks: Record<string, number> = { low: 1, medium: 2, high: 3, critical: 4 };
+  return ranks[s] || 0;
+}
+
+// --- Claude Validation (Phase 3) ---
+
+/**
+ * Validate a MiniMax finding using Claude Code (`claude -p`).
+ * Claude reads the actual source files, analyzes the concern,
+ * and returns a structured verdict: confirmed or rejected.
+ *
+ * Uses subscription OAuth token (already configured on bigblack).
+ * Runs on the host — container isolation deferred to Phase 6.
+ */
+function validateWithClaude(
   finding: Finding,
   repoPath: string,
   headCommit: string,
-): string | null {
-  const labels = ['nanoclaw', finding.type].join(',');
-  const body = `---
-nanoclaw-type: ${finding.type}
-severity: ${finding.severity}
-files:
-${finding.files.map((f) => `  - ${f}`).join('\n')}
-validation: |
-  ${finding.validation}
-commit: ${headCommit.slice(0, 7)}
----
+): ValidationResult | null {
+  // Build file context: read affected files for Claude to analyze
+  const fileContexts = finding.files
+    .map((f) => {
+      const content = readRepoFile(repoPath, f);
+      if (!content) return '';
+      // Truncate large files to 10KB
+      const truncated = content.length > 10_000
+        ? content.slice(0, 10_000) + '\n... (truncated)'
+        : content;
+      return `--- ${f} ---\n${truncated}\n`;
+    })
+    .filter(Boolean)
+    .join('\n');
 
-## Finding: ${finding.title}
+  const prompt = `You are validating a code quality finding for opendeviationbar-py (Rust+Python maturin project).
 
-**What**: ${finding.description}
+FINDING:
+- Type: ${finding.type}
+- Severity: ${finding.severity}
+- Title: ${finding.title}
+- Description: ${finding.description}
+- Files: ${finding.files.join(', ')}
+- Suggested validation: ${finding.validation}
+- Commit: ${headCommit.slice(0, 7)}
 
-**Severity**: ${finding.severity}
+SOURCE CODE OF AFFECTED FILES:
+${fileContexts || '(files not readable)'}
 
-**Files**:
-${finding.files.map((f) => `- \`${f}\``).join('\n')}
+TASK: Analyze the source code and determine if this finding is a genuine concern.
 
-**Validation**:
-\`\`\`bash
-${finding.validation}
-\`\`\`
+Respond with EXACTLY this JSON format (no markdown fences, no extra text):
+{"confirmed": true/false, "confidence": "low"/"medium"/"high", "analysis": "2-3 sentence explanation", "suggestedFix": "optional fix suggestion"}
 
----
-*Auto-created by NanoClaw continuous validation at ${new Date().toISOString()}*`;
+RULES:
+- confirmed=true only if the concern is real and actionable
+- confirmed=false if: it's by-design, already handled, or a false positive
+- confidence=high means you're very sure; low means it's debatable
+- Be skeptical — default to false unless the evidence is clear`;
 
   try {
-    const result = execSync(
-      `gh issue create --repo terrylica/opendeviationbar-py --title "${finding.title.replace(/"/g, '\\"')}" --label "${labels}" --body "$(cat <<'ISSUE_EOF'\n${body}\nISSUE_EOF\n)"`,
-      { cwd: repoPath, encoding: 'utf-8', timeout: 15_000 },
+    logger.info(
+      { title: finding.title, files: finding.files },
+      'Validating finding with Claude',
     );
-    const url = result.trim();
-    logger.info({ url, type: finding.type }, 'GitHub issue created');
-    return url;
+
+    const result = spawnSync('claude', ['-p', '--output-format', 'text'], {
+      input: prompt,
+      cwd: repoPath,
+      encoding: 'utf-8',
+      timeout: CLAUDE_VALIDATION_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+    });
+
+    if (result.error || result.status !== 0) {
+      logger.error(
+        {
+          title: finding.title,
+          error: result.error?.message || result.stderr?.slice(0, 200),
+          status: result.status,
+        },
+        'Claude validation failed',
+      );
+      return null;
+    }
+
+    const output = result.stdout.trim();
+
+    // Extract JSON from Claude's response (may have markdown or prose around it)
+    let jsonStr = output;
+    const jsonMatch = output.match(/\{[\s\S]*"confirmed"[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[0];
+    }
+
+    const validation: ValidationResult = JSON.parse(jsonStr);
+
+    logger.info(
+      {
+        title: finding.title,
+        confirmed: validation.confirmed,
+        confidence: validation.confidence,
+      },
+      'Claude validation result',
+    );
+
+    return validation;
   } catch (err) {
-    logger.error({ err, title: finding.title }, 'Failed to create GitHub issue');
+    logger.error(
+      { err, title: finding.title },
+      'Claude validation error',
+    );
     return null;
   }
 }
 
-// Deduplication: check if a similar issue already exists
-function issueExists(title: string): boolean {
+// --- Fuzzy Deduplication ---
+
+/**
+ * Check if a similar issue already exists using fuzzy title matching.
+ * Compares word overlap (Jaccard similarity) to catch near-duplicates
+ * like "Silent failure in X" vs "X silently swallows errors".
+ */
+function issueExistsFuzzy(title: string): boolean {
   try {
+    // Fetch all open nanoclaw issues
     const result = execSync(
-      `gh issue list --repo terrylica/opendeviationbar-py --label nanoclaw --search "${title.replace(/"/g, '\\"')}" --state open --limit 5 --json title`,
+      `gh issue list --repo terrylica/opendeviationbar-py --label nanoclaw --state open --limit 50 --json title`,
       { encoding: 'utf-8', timeout: 10_000 },
     );
     const issues = JSON.parse(result) as Array<{ title: string }>;
-    return issues.some(
-      (i) => i.title.toLowerCase() === title.toLowerCase(),
-    );
+
+    const titleWords = extractWords(title);
+
+    for (const issue of issues) {
+      // Exact match
+      if (issue.title.toLowerCase() === title.toLowerCase()) return true;
+
+      // Fuzzy: Jaccard similarity on words
+      const issueWords = extractWords(issue.title);
+      const intersection = titleWords.filter((w) => issueWords.includes(w));
+      const union = new Set([...titleWords, ...issueWords]);
+      const similarity = union.size > 0 ? intersection.length / union.size : 0;
+
+      if (similarity >= 0.5) {
+        logger.info(
+          { existing: issue.title, new: title, similarity: similarity.toFixed(2) },
+          'Fuzzy duplicate detected',
+        );
+        return true;
+      }
+    }
+    return false;
   } catch {
     return false; // fail open — create the issue
+  }
+}
+
+function extractWords(s: string): string[] {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length > 2); // skip short words like "in", "of"
+}
+
+// --- cc-skills Sync ---
+
+/**
+ * Pull latest cc-skills for up-to-date issue templates and patterns.
+ * Fire-and-forget — failure is non-fatal.
+ */
+function syncCcSkills(ccSkillsPath: string): void {
+  if (!ccSkillsPath || !fs.existsSync(ccSkillsPath)) return;
+  try {
+    execSync('git pull --ff-only origin main 2>&1', {
+      cwd: ccSkillsPath,
+      timeout: 15_000,
+      encoding: 'utf-8',
+    });
+    logger.info({ path: ccSkillsPath }, 'cc-skills synced');
+  } catch (err) {
+    logger.warn({ err }, 'cc-skills sync failed (non-fatal)');
+  }
+}
+
+// --- Label Taxonomy (cc-skills pattern: taxonomy-aware labels) ---
+
+/**
+ * Fetch existing labels from the target repo. Cached for 24 hours.
+ * cc-skills pattern: only suggest labels that actually exist in the repo.
+ */
+function fetchRepoLabels(): string[] {
+  const now = Date.now();
+  if (cachedRepoLabels && now - labelsCacheTime < LABEL_CACHE_TTL_MS) {
+    return cachedRepoLabels;
+  }
+  try {
+    const result = execSync(
+      'gh label list --repo terrylica/opendeviationbar-py --json name --limit 100',
+      { encoding: 'utf-8', timeout: 10_000 },
+    );
+    const labels = JSON.parse(result) as Array<{ name: string }>;
+    cachedRepoLabels = labels.map((l) => l.name);
+    labelsCacheTime = now;
+    logger.info({ count: cachedRepoLabels.length }, 'Repo labels fetched');
+    return cachedRepoLabels;
+  } catch (err) {
+    logger.warn({ err }, 'Failed to fetch repo labels');
+    return cachedRepoLabels || [];
+  }
+}
+
+/**
+ * Suggest 2-4 labels for a finding using MiniMax (cheap, fast).
+ * cc-skills pattern: AI-powered label suggestion constrained to existing taxonomy.
+ * Falls back to keyword matching if MiniMax fails.
+ */
+async function suggestLabels(
+  finding: Finding,
+  validation: ValidationResult,
+  apiKey: string,
+): Promise<string[]> {
+  const repoLabels = fetchRepoLabels();
+  // Always include 'nanoclaw' base label
+  const baseLabels = ['nanoclaw'];
+
+  if (repoLabels.length === 0) {
+    // No labels fetched — fall back to type-based label
+    return [...baseLabels, finding.type];
+  }
+
+  // Keyword fallback mapping (cc-skills pattern)
+  const keywordMap: Record<string, string[]> = {
+    bug: ['bug', 'error', 'crash', 'broken', 'fail', 'defect'],
+    'performance-regression': ['performance', 'perf', 'regression', 'slow', 'benchmark'],
+    'test-gap': ['testing', 'test', 'coverage', 'quality'],
+    'daemon-behavior': ['daemon', 'service', 'runtime', 'behavior'],
+  };
+
+  try {
+    const prompt = `Suggest 2-4 labels from the EXISTING taxonomy only for this code finding.
+Never suggest labels that don't exist in the list below.
+Return ONLY a JSON array of label names, nothing else.
+
+AVAILABLE LABELS:
+${repoLabels.map((l) => `- ${l}`).join('\n')}
+
+FINDING TYPE: ${finding.type}
+SEVERITY: ${finding.severity}
+TITLE: ${finding.title}
+DESCRIPTION: ${finding.description}
+CONFIDENCE: ${validation.confidence}
+
+Return format: ["label1", "label2"]`;
+
+    const raw = await queryMiniMax(prompt, apiKey, 'You suggest GitHub issue labels. Return only a JSON array.');
+    const suggested = JSON.parse(raw.trim()) as string[];
+
+    // Validate: only keep labels that exist in the repo
+    const validLabels = suggested.filter((l) => repoLabels.includes(l));
+    const result = [...new Set([...baseLabels, ...validLabels])];
+    logger.info({ suggested: validLabels }, 'MiniMax label suggestion');
+    return result.slice(0, 5); // cap at 5 labels
+  } catch {
+    // Keyword fallback (cc-skills pattern)
+    const keywords = keywordMap[finding.type] || [];
+    const matched = repoLabels.filter((label) =>
+      keywords.some((kw) => label.toLowerCase().includes(kw)),
+    );
+    return [...new Set([...baseLabels, finding.type, ...matched])].slice(0, 5);
+  }
+}
+
+// --- Related Issues Search (cc-skills pattern) ---
+
+/**
+ * Search for related existing issues to link in the new issue body.
+ * cc-skills pattern: duplicate warnings + related issue references.
+ */
+function searchRelatedIssues(title: string, _files: string[]): Array<{ number: number; title: string; url: string }> {
+  try {
+    // Search by key words from the title
+    const searchTerms = extractWords(title).slice(0, 3).join(' ');
+    const result = execSync(
+      `gh issue list --repo terrylica/opendeviationbar-py --search "${searchTerms.replace(/"/g, '\\"')}" --state all --limit 5 --json number,title,url`,
+      { encoding: 'utf-8', timeout: 10_000 },
+    );
+    const issues = JSON.parse(result) as Array<{ number: number; title: string; url: string }>;
+    return issues;
+  } catch {
+    return [];
+  }
+}
+
+// --- Type-Specific Issue Templates (cc-skills pattern) ---
+
+const FINDING_TYPE_TEMPLATES: Record<string, (f: Finding, v: ValidationResult, commit: string) => string> = {
+  'bug': (f, v, commit) => `## Bug Report
+
+### Description
+
+${f.description}
+
+### Evidence
+
+${v.analysis}
+
+### Affected Files
+
+${f.files.map((file) => `- \`${file}\``).join('\n')}
+
+### Steps to Reproduce
+
+\`\`\`bash
+${f.validation}
+\`\`\`
+
+${v.suggestedFix ? `### Suggested Fix\n\n${v.suggestedFix}\n` : ''}
+### Environment
+
+- Commit: \`${commit}\`
+- Severity: **${f.severity}** | Confidence: **${v.confidence}**`,
+
+  'performance-regression': (f, v, commit) => `## Performance Regression
+
+### Description
+
+${f.description}
+
+### Evidence
+
+${v.analysis}
+
+### Affected Files
+
+${f.files.map((file) => `- \`${file}\``).join('\n')}
+
+### Benchmark / Validation
+
+\`\`\`bash
+${f.validation}
+\`\`\`
+
+${v.suggestedFix ? `### Suggested Fix\n\n${v.suggestedFix}\n` : ''}
+### Environment
+
+- Commit: \`${commit}\`
+- Severity: **${f.severity}** | Confidence: **${v.confidence}**`,
+
+  'test-gap': (f, v, commit) => `## Test Coverage Gap
+
+### Summary
+
+${f.description}
+
+### Analysis
+
+${v.analysis}
+
+### Affected Files (Missing Coverage)
+
+${f.files.map((file) => `- \`${file}\``).join('\n')}
+
+### Suggested Tests
+
+\`\`\`bash
+${f.validation}
+\`\`\`
+
+${v.suggestedFix ? `### Proposed Implementation\n\n${v.suggestedFix}\n` : ''}
+### Environment
+
+- Commit: \`${commit}\`
+- Severity: **${f.severity}** | Confidence: **${v.confidence}**`,
+
+  'daemon-behavior': (f, v, commit) => `## Daemon Behavior Issue
+
+### Description
+
+${f.description}
+
+### Analysis
+
+${v.analysis}
+
+### Affected Files
+
+${f.files.map((file) => `- \`${file}\``).join('\n')}
+
+### Reproduction / Validation
+
+\`\`\`bash
+${f.validation}
+\`\`\`
+
+${v.suggestedFix ? `### Suggested Fix\n\n${v.suggestedFix}\n` : ''}
+### Environment
+
+- Commit: \`${commit}\`
+- Severity: **${f.severity}** | Confidence: **${v.confidence}**`,
+};
+
+// --- Title Optimization (cc-skills pattern: use full 256 chars) ---
+
+const TITLE_TYPE_PREFIX: Record<string, string> = {
+  'bug': 'Bug',
+  'performance-regression': 'Perf',
+  'test-gap': 'Test Gap',
+  'daemon-behavior': 'Daemon',
+};
+
+function optimizeTitle(finding: Finding): string {
+  const prefix = TITLE_TYPE_PREFIX[finding.type] || finding.type;
+  const severityTag = finding.severity === 'critical' || finding.severity === 'high'
+    ? ` [${finding.severity}]` : '';
+  // cc-skills pattern: use full 256-char GitHub title limit for informative, searchable titles
+  const base = `${prefix}: ${finding.title}${severityTag}`;
+  if (base.length <= 256) return base;
+  return base.slice(0, 253) + '...';
+}
+
+// --- GitHub Issue Creation (enhanced with cc-skills patterns) ---
+
+function createGitHubIssue(
+  finding: Finding,
+  validation: ValidationResult,
+  repoPath: string,
+  headCommit: string,
+  labels: string[],
+): string | null {
+  const commitShort = headCommit.slice(0, 7);
+  const template = FINDING_TYPE_TEMPLATES[finding.type] || FINDING_TYPE_TEMPLATES['bug'];
+  const typedBody = template(finding, validation, commitShort);
+
+  // Discovery provenance (cc-skills gh-tools pattern)
+  const perspectives = finding.sourcePerspectives?.length
+    ? finding.sourcePerspectives.join(', ')
+    : 'consensus';
+  const perspectiveCount = finding.sourcePerspectives?.length || 0;
+
+  // Related issues
+  const related = searchRelatedIssues(finding.title, finding.files);
+  const relatedSection = related.length > 0
+    ? `\n### Related Issues\n\n${related.map((r) => `- #${r.number} — ${r.title}`).join('\n')}\n`
+    : '';
+
+  // YAML frontmatter (machine-readable metadata)
+  const frontmatter = `---
+nanoclaw-type: ${finding.type}
+severity: ${finding.severity}
+confidence: ${validation.confidence}
+perspectives: ${perspectiveCount}
+files:
+${finding.files.map((f) => `  - ${f}`).join('\n')}
+validation: |
+  ${finding.validation}
+commit: ${commitShort}
+---`;
+
+  // Discovery provenance section
+  const provenanceSection = `### Discovery Provenance
+
+| Field | Value |
+|-------|-------|
+| Pipeline | MiniMax M2.5-highspeed triage → Claude Code validation |
+| Perspectives | ${perspectives} (${perspectiveCount} expert${perspectiveCount !== 1 ? 's' : ''}) |
+| Commit | \`${commitShort}\` |
+| Created | ${new Date().toISOString()} |`;
+
+  const body = `${frontmatter}
+
+${typedBody}
+${relatedSection}
+${provenanceSection}
+
+---
+*Auto-created by [NanoClaw](https://github.com/terrylica/nanoclaw) continuous validation*`;
+
+  const title = optimizeTitle(finding);
+
+  try {
+    // Use a temp file for the body to avoid shell escaping issues (cc-skills GFM anti-pattern AP-04)
+    const tmpFile = path.join(DATA_DIR, 'issue-body.tmp.md');
+    fs.writeFileSync(tmpFile, body);
+
+    const labelStr = labels.join(',');
+    const result = execSync(
+      `gh issue create --repo terrylica/opendeviationbar-py --title "${title.replace(/"/g, '\\"')}" --label "${labelStr}" --body-file "${tmpFile}"`,
+      { cwd: repoPath, encoding: 'utf-8', timeout: 15_000 },
+    );
+
+    // Clean up temp file
+    try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+
+    const url = result.trim();
+    logger.info({ url, type: finding.type, confidence: validation.confidence, labels: labelStr }, 'GitHub issue created');
+    return url;
+  } catch (err) {
+    logger.error(
+      { err, title },
+      'Failed to create GitHub issue',
+    );
+    return null;
   }
 }
 
@@ -318,20 +1111,31 @@ async function sendTelegramNotification(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5_000);
 
-    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: message,
-        parse_mode: 'HTML',
-        disable_notification: true,
-        link_preview_options: { is_disabled: true },
-      }),
-      signal: controller.signal,
-    });
+    const response = await fetch(
+      `https://api.telegram.org/bot${botToken}/sendMessage`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: 'HTML',
+          disable_notification: true,
+          link_preview_options: { is_disabled: true },
+        }),
+        signal: controller.signal,
+      },
+    );
 
     clearTimeout(timer);
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      logger.warn(
+        { status: response.status, body: body.slice(0, 200) },
+        'Telegram API error',
+      );
+    }
   } catch (err) {
     logger.warn({ err }, 'Telegram notification failed (non-fatal)');
   }
@@ -347,6 +1151,7 @@ function formatHeartbeat(state: OrchestratorState, branch: string): string {
     ``,
     `• Cycles: <code>${state.cycleCount}</code>`,
     `• Issues created: <code>${state.issuesCreated}</code>`,
+    `• Validated: <code>${state.findingsValidated}</code> | Rejected: <code>${state.findingsRejected}</code>`,
     `• Uptime: <code>${elapsed} min</code>`,
     `• Branch: <code>${branch}</code>`,
     `• Last commit: <code>${state.lastCheckedCommit.slice(0, 7) || 'none'}</code>`,
@@ -357,6 +1162,7 @@ function formatHeartbeat(state: OrchestratorState, branch: string): string {
 
 function formatFindingNotification(
   finding: Finding,
+  validation: ValidationResult,
   issueUrl: string | null,
 ): string {
   const icon =
@@ -368,13 +1174,14 @@ function formatFindingNotification(
           ? '🟡'
           : '🟢';
   const lines = [
-    `<b>${icon} NanoClaw Finding: ${escapeHtml(finding.title)}</b>`,
+    `<b>${icon} NanoClaw: ${escapeHtml(finding.title)}</b>`,
     ``,
-    `<b>Type</b>: <code>${finding.type}</code>`,
-    `<b>Severity</b>: <code>${finding.severity}</code>`,
+    `<b>Type</b>: <code>${finding.type}</code> | <b>Severity</b>: <code>${finding.severity}</code> | <b>Confidence</b>: <code>${validation.confidence}</code>`,
     `<b>Files</b>: ${finding.files.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}`,
     ``,
     `<i>${escapeHtml(finding.description)}</i>`,
+    ``,
+    `<b>Analysis</b>: ${escapeHtml(validation.analysis.slice(0, 300))}`,
   ];
   if (issueUrl) {
     lines.push(``, `📋 ${issueUrl}`);
@@ -403,12 +1210,13 @@ export async function startOrchestratorLoop(
     'MINIMAX_API_KEY',
     'TELEGRAM_BOT_TOKEN',
     'TELEGRAM_CHAT_ID',
+    'CC_SKILLS_PATH',
   ]);
-  const minimaxKey =
-    process.env.MINIMAX_API_KEY || env.MINIMAX_API_KEY || '';
+  const minimaxKey = process.env.MINIMAX_API_KEY || env.MINIMAX_API_KEY || '';
   const botToken =
     process.env.TELEGRAM_BOT_TOKEN || env.TELEGRAM_BOT_TOKEN || '';
   const chatId = process.env.TELEGRAM_CHAT_ID || env.TELEGRAM_CHAT_ID || '';
+  const ccSkillsPath = process.env.CC_SKILLS_PATH || env.CC_SKILLS_PATH || '';
 
   if (!minimaxKey) {
     logger.fatal('MINIMAX_API_KEY not set — orchestrator cannot start');
@@ -426,6 +1234,12 @@ export async function startOrchestratorLoop(
       { commit: state.lastCheckedCommit },
       'Orchestrator initialized at current HEAD',
     );
+  }
+
+  // Sync cc-skills on startup for latest issue templates
+  if (ccSkillsPath) {
+    syncCcSkills(ccSkillsPath);
+    logger.info({ ccSkillsPath }, 'cc-skills path configured');
   }
 
   logger.info(
@@ -447,7 +1261,8 @@ export async function startOrchestratorLoop(
         `• Repo: <code>opendeviationbar-py</code>`,
         `• Branch: <code>${branch}</code>`,
         `• From commit: <code>${state.lastCheckedCommit.slice(0, 7)}</code>`,
-        `• Mode: continuous diff-driven`,
+        `• Mode: continuous diff-driven (MiniMax + Claude)`,
+        `• Rate limit: <code>${MAX_ISSUES_PER_HOUR}/hr</code>`,
         ``,
         `<i>${new Date().toLocaleString('en-CA', { timeZone: 'America/Vancouver', hour12: false })}</i>`,
       ].join('\n'),
@@ -473,19 +1288,28 @@ export async function startOrchestratorLoop(
         );
         state.lastHeartbeat = new Date().toISOString();
         saveState(state);
+
+        // Sync cc-skills on heartbeat to stay updated
+        if (ccSkillsPath) syncCcSkills(ccSkillsPath);
       }
 
       // Step 1: git pull
       const pulled = gitPull(config.repoPath);
       if (!pulled) {
-        await sleep(CYCLE_COOLDOWN_MS);
+        state.consecutiveErrors++;
+        saveState(state);
+        const backoff = Math.min(
+          CYCLE_COOLDOWN_ERROR_MS * Math.pow(2, state.consecutiveErrors - 1),
+          10 * 60_000, // max 10 min
+        );
+        logger.warn({ backoff }, 'Backing off after git pull failure');
+        await sleep(backoff);
         continue;
       }
 
       // Step 2: Check for changes
       const headCommit = getHeadCommit(config.repoPath);
       if (headCommit === state.lastCheckedCommit) {
-        // No changes — sleep and retry
         await sleep(CYCLE_COOLDOWN_MS);
         continue;
       }
@@ -503,10 +1327,7 @@ export async function startOrchestratorLoop(
       }
 
       const diff = getDiff(config.repoPath, state.lastCheckedCommit);
-      const commitLog = getCommitLog(
-        config.repoPath,
-        state.lastCheckedCommit,
-      );
+      const commitLog = getCommitLog(config.repoPath, state.lastCheckedCommit);
 
       logger.info(
         {
@@ -524,6 +1345,7 @@ export async function startOrchestratorLoop(
         commitLog,
         changedFiles,
         minimaxKey,
+        config.repoPath,
       );
 
       logger.info(
@@ -531,31 +1353,77 @@ export async function startOrchestratorLoop(
         'MiniMax triage complete',
       );
 
-      // Step 4: Create issues for confirmed findings
+      // Step 4: Validate and create issues for confirmed findings
       for (const finding of triage.findings) {
-        // Dedup check
-        if (issueExists(finding.title)) {
-          logger.info(
-            { title: finding.title },
-            'Skipping duplicate finding',
+        // Rate limit check
+        if (!checkRateLimit(state)) {
+          logger.warn(
+            { limit: MAX_ISSUES_PER_HOUR },
+            'Hourly issue rate limit reached, skipping remaining findings',
           );
+          break;
+        }
+
+        // Fuzzy dedup check
+        if (issueExistsFuzzy(finding.title)) {
+          logger.info({ title: finding.title }, 'Skipping duplicate finding');
           continue;
         }
 
-        const issueUrl = createGitHubIssue(
+        // Claude validation (Phase 3)
+        const validation = validateWithClaude(
           finding,
           config.repoPath,
           headCommit,
         );
 
-        if (issueUrl) {
-          state.issuesCreated++;
+        if (!validation) {
+          // Claude validation failed (timeout, error) — skip, don't create unvalidated issue
+          logger.warn({ title: finding.title }, 'Skipping finding — Claude validation unavailable');
+          continue;
         }
 
-        // Telegram notification per finding
+        if (!validation.confirmed) {
+          state.findingsRejected++;
+          logger.info(
+            { title: finding.title, analysis: validation.analysis.slice(0, 100) },
+            'Finding rejected by Claude',
+          );
+          continue;
+        }
+
+        // Skip low-confidence validations
+        if (validation.confidence === 'low') {
+          state.findingsRejected++;
+          logger.info(
+            { title: finding.title },
+            'Finding has low confidence, skipping',
+          );
+          continue;
+        }
+
+        state.findingsValidated++;
+
+        // cc-skills pattern: taxonomy-aware label suggestion via MiniMax
+        const labels = await suggestLabels(finding, validation, minimaxKey);
+
+        const issueUrl = createGitHubIssue(
+          finding,
+          validation,
+          config.repoPath,
+          headCommit,
+          labels,
+        );
+
+        if (issueUrl) {
+          state.issuesCreated++;
+          state.issuesCreatedThisHour++;
+        }
+
+        // Telegram notification per confirmed finding
         if (botToken && chatId) {
           await sendTelegramNotification(
-            formatFindingNotification(finding, issueUrl),
+            formatFindingNotification(finding, validation, issueUrl),
             botToken,
             chatId,
           );
@@ -565,18 +1433,46 @@ export async function startOrchestratorLoop(
       // Advance state
       state.lastCheckedCommit = headCommit;
       state.cycleCount++;
+      state.consecutiveErrors = 0;
       saveState(state);
 
       logger.info(
         {
           cycle: state.cycleCount,
           findings: triage.findings.length,
+          validated: state.findingsValidated,
+          rejected: state.findingsRejected,
           issuesTotal: state.issuesCreated,
         },
         'Cycle complete',
       );
     } catch (err) {
-      logger.error({ err }, 'Orchestrator cycle error');
+      state.consecutiveErrors++;
+      saveState(state);
+
+      const backoff = Math.min(
+        CYCLE_COOLDOWN_ERROR_MS * Math.pow(2, state.consecutiveErrors - 1),
+        10 * 60_000,
+      );
+      logger.error({ err, backoff, consecutiveErrors: state.consecutiveErrors }, 'Orchestrator cycle error');
+
+      // Alert on repeated failures
+      if (state.consecutiveErrors >= 3 && botToken && chatId) {
+        await sendTelegramNotification(
+          [
+            `<b>⚠️ NanoClaw Error Alert</b>`,
+            ``,
+            `Consecutive failures: <code>${state.consecutiveErrors}</code>`,
+            `Next retry in: <code>${Math.round(backoff / 1000)}s</code>`,
+            `Error: <code>${escapeHtml(String(err).slice(0, 200))}</code>`,
+          ].join('\n'),
+          botToken,
+          chatId,
+        );
+      }
+
+      await sleep(backoff);
+      continue;
     }
 
     await sleep(CYCLE_COOLDOWN_MS);
