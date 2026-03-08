@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#MISE description="Build locally and deploy to bigblack via rsync + systemd restart"
+set -euo pipefail
+
+REMOTE="bigblack"
+REMOTE_DIR="~/fork-tools/nanoclaw"
+
+echo "→ Building TypeScript..."
+npx tsc
+
+echo "→ Syncing source to ${REMOTE}..."
+rsync -avz \
+  --exclude='node_modules' \
+  --exclude='.git' \
+  --exclude='.env' \
+  --exclude='dist' \
+  . "${REMOTE}:${REMOTE_DIR}/"
+
+echo "→ Syncing dist/ to ${REMOTE}..."
+rsync -avz dist/ "${REMOTE}:${REMOTE_DIR}/dist/"
+
+echo "→ Restarting nanoclaw service on ${REMOTE}..."
+ssh "${REMOTE}" 'systemctl --user restart nanoclaw && sleep 3 && systemctl --user status nanoclaw' 2>&1
+
+echo ""
+echo "✓ Deployed and restarted on ${REMOTE}"
