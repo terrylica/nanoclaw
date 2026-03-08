@@ -3,16 +3,33 @@
  */
 import { logger } from '../logger.js';
 import { getHeadCommit, getScannableFiles, readRepoFile } from './git-ops.js';
-import { extractWords, parseMiniMaxFindings, queryMiniMax } from './minimax-client.js';
-import { loadFalsePositivePatterns, runConsensusRound, runDevilsAdvocateRound, verifyFindingScript, validateWithClaude } from './pipeline.js';
+import {
+  extractWords,
+  parseMiniMaxFindings,
+  queryMiniMax,
+} from './minimax-client.js';
+import {
+  loadFalsePositivePatterns,
+  runConsensusRound,
+  runDevilsAdvocateRound,
+  verifyFindingScript,
+  validateWithClaude,
+} from './pipeline.js';
 import { runIterativeSelfValidation } from './self-validation.js';
-import { sendTelegramNotification, formatFindingNotification } from './telegram.js';
+import {
+  sendTelegramNotification,
+  formatFindingNotification,
+} from './telegram.js';
 import { suggestLabels } from './github-issues.js';
 import { createGitHubIssue } from './github-issues.js';
 import { saveState, checkRateLimit } from './state.js';
 import { issueExistsFuzzy } from './github-issues.js';
 import { CHUNK_CHAR_BUDGET, PER_FILE_TRUNCATE, traceId } from './types.js';
-import type { Finding, OrchestratorConfig, OrchestratorState } from './types.js';
+import type {
+  Finding,
+  OrchestratorConfig,
+  OrchestratorState,
+} from './types.js';
 
 // --- Scanning Prompts ---
 
@@ -330,7 +347,10 @@ export async function runAlgoScanCycle(
   );
 
   try {
-    const scanResult = await runAlgoCorrectnessScan(config.repoPath, minimaxKey);
+    const scanResult = await runAlgoCorrectnessScan(
+      config.repoPath,
+      minimaxKey,
+    );
     const rawFindings = scanResult.findings;
 
     logger.info(

@@ -13,11 +13,7 @@ import {
 } from './minimax-client.js';
 import { loadFalsePositivePatterns } from './pipeline.js';
 import { MAX_FINDINGS_PER_CYCLE, MIN_SEVERITY_FOR_ISSUE } from './types.js';
-import type {
-  ExpertPerspective,
-  Finding,
-  TriageResult,
-} from './types.js';
+import type { ExpertPerspective, Finding, TriageResult } from './types.js';
 
 // --- Expert Perspectives ---
 
@@ -323,9 +319,8 @@ export async function triageChanges(
       };
     }
 
-    const { runConsensusRound, runDevilsAdvocateRound } = await import(
-      './pipeline.js'
-    );
+    const { runConsensusRound, runDevilsAdvocateRound } =
+      await import('./pipeline.js');
 
     const consensusFindings = await runConsensusRound(
       afterFpFilter,

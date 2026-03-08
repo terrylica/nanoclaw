@@ -21,11 +21,25 @@ import {
   getHeadCommit,
   gitPull,
 } from './git-ops.js';
-import { suggestLabels, createGitHubIssue, issueExistsFuzzy } from './github-issues.js';
+import {
+  suggestLabels,
+  createGitHubIssue,
+  issueExistsFuzzy,
+} from './github-issues.js';
 import { syncCcSkills, runClaudeMdMaintenance } from './maintenance.js';
-import { setTargetRepo, syncFalsePositivePatterns, verifyFindingScript, validateWithClaude } from './pipeline.js';
+import {
+  setTargetRepo,
+  syncFalsePositivePatterns,
+  verifyFindingScript,
+  validateWithClaude,
+} from './pipeline.js';
 import { runAlgoScanCycle, runProactiveScanCycle } from './scanning.js';
-import { loadState, saveState, rotateLogIfNeeded, checkRateLimit } from './state.js';
+import {
+  loadState,
+  saveState,
+  rotateLogIfNeeded,
+  checkRateLimit,
+} from './state.js';
 import {
   getSemanticDiffs,
   runAstGrepOnFiles,

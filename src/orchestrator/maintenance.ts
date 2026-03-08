@@ -35,7 +35,9 @@ export function syncCcSkills(ccSkillsPath: string): void {
     let contentTypes = '';
 
     if (fs.existsSync(labelStrategyPath)) {
-      labelStrategy = fs.readFileSync(labelStrategyPath, 'utf-8').slice(0, 2000);
+      labelStrategy = fs
+        .readFileSync(labelStrategyPath, 'utf-8')
+        .slice(0, 2000);
     }
     if (fs.existsSync(contentTypesPath)) {
       contentTypes = fs.readFileSync(contentTypesPath, 'utf-8').slice(0, 2000);

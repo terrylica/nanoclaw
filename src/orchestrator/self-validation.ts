@@ -152,9 +152,7 @@ Challenge each finding using your expertise. Respond with JSON array of survivor
             ? `• Disproved: <code>${dropped}</code> finding(s)`
             : `• All findings withstood challenge`,
           nextSurvivors.length > 0
-            ? nextSurvivors
-                .map((f) => `  → ${f.title.slice(0, 80)}`)
-                .join('\n')
+            ? nextSurvivors.map((f) => `  → ${f.title.slice(0, 80)}`).join('\n')
             : `  <i>All findings disproved</i>`,
         ].join('\n'),
       );
