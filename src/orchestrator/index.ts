@@ -162,6 +162,18 @@ export async function startOrchestratorLoop(config: {
     );
   }
 
+  // Graceful shutdown on SIGTERM/SIGINT (systemd sends SIGTERM)
+  let shuttingDown = false;
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(sig, () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      logger.info({ signal: sig }, 'Graceful shutdown requested');
+      saveState(state);
+      process.exit(0);
+    });
+  }
+
   // Main loop
   while (true) {
     try {
