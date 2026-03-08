@@ -168,6 +168,35 @@ export async function runClaudeMdMaintenance(
 
     logger.info({ summary, isNoChanges }, 'CLAUDE.md maintenance complete');
 
+    // Commit and push CLAUDE.md changes to remote
+    if (!isNoChanges) {
+      try {
+        const commitShort = headCommit.slice(0, 7);
+        // Stage only CLAUDE.md files (never stage unrelated changes)
+        execSync(
+          'git add -A -- "**/CLAUDE.md" "CLAUDE.md"',
+          { cwd: repoPath, encoding: 'utf-8', timeout: 10_000 },
+        );
+        const hasStagedChanges = execSync(
+          'git diff --cached --quiet || echo "dirty"',
+          { cwd: repoPath, encoding: 'utf-8', timeout: 5_000 },
+        ).trim();
+        if (hasStagedChanges === 'dirty') {
+          execSync(
+            `git commit -m "docs: update CLAUDE.md project memory (${commitShort})"`,
+            { cwd: repoPath, encoding: 'utf-8', timeout: 15_000 },
+          );
+          execSync(
+            'git push',
+            { cwd: repoPath, encoding: 'utf-8', timeout: 30_000 },
+          );
+          logger.info('CLAUDE.md changes committed and pushed');
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Failed to commit/push CLAUDE.md changes (non-fatal)');
+      }
+    }
+
     let issueUrl: string | null = null;
     if (!isNoChanges && targetRepo) {
       const commitShort = headCommit.slice(0, 7);
