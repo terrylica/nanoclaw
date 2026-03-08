@@ -14,8 +14,9 @@ if ! npm ls semantic-release >/dev/null 2>&1; then
 fi
 
 # Run semantic-release (respects GH_TOKEN from environment)
+# Use --no-ci to allow releases from local machine (authenticated via GH_TOKEN)
 echo "Running semantic-release..."
-npx semantic-release
+npx semantic-release --no-ci
 
 echo ""
 echo "✓ Version bump complete"
