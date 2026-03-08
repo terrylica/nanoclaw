@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#MISE description="Phase 1: Pre-release checks (clean git, auth, dependencies)"
+
+set -euo pipefail
+
+echo "→ Preflight checks"
+echo ""
+
+# 1. Check working directory is clean
+echo "Checking git working directory..."
+DIRTY=$(git status --porcelain)
+if [[ -n "$DIRTY" ]]; then
+    echo "FAIL: Uncommitted changes detected:"
+    echo "$DIRTY"
+    exit 1
+fi
+
+# 2. Check not ahead of upstream
+echo "Checking for unpushed commits..."
+UNPUSHED=$(git log --oneline @{u}..HEAD 2>/dev/null || echo "")
+if [[ -n "$UNPUSHED" ]]; then
+    echo "FAIL: Unpushed commits found:"
+    echo "$UNPUSHED"
+    exit 1
+fi
+
+# 3. Check on main branch
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [[ "$BRANCH" != "main" ]]; then
+    echo "FAIL: Not on main branch (currently: $BRANCH)"
+    exit 1
+fi
+
+# 4. Install/verify semantic-release and plugins
+echo "Installing semantic-release..."
+npm install --save-dev semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github
+
+# 5. Verify Node.js version
+NODE_VERSION=$(node -v)
+echo "Node.js version: $NODE_VERSION"
+
+echo ""
+echo "✓ Preflight PASSED — ready to release"

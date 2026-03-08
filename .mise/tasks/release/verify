@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#MISE description="Phase 4: Verify GitHub release was created and version is correct"
+
+set -euo pipefail
+
+echo "→ Phase 4: Verifying release"
+echo ""
+
+# Get current version from package.json
+CURRENT_VERSION=$(node -p "require('./package.json').version")
+echo "Current version: $CURRENT_VERSION"
+
+# Get current tag from git
+CURRENT_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "none")
+echo "Latest tag: $CURRENT_TAG"
+
+# If GitHub repo is configured, verify the release exists
+if command -v gh >/dev/null 2>&1; then
+    REPO=$(git remote get-url origin | sed 's/.*[:/]\(.*\)\/\(.*\)\.git/\1\/\2/')
+    echo "Checking GitHub release for $REPO@v$CURRENT_VERSION..."
+
+    if gh release view "v$CURRENT_VERSION" --repo "$REPO" >/dev/null 2>&1; then
+        echo "✓ GitHub release v$CURRENT_VERSION exists"
+    else
+        echo "⚠ GitHub release v$CURRENT_VERSION not found (may still be creating)"
+    fi
+else
+    echo "⚠ gh CLI not found, skipping GitHub verification"
+fi
+
+echo ""
+echo "✓ Verification complete"

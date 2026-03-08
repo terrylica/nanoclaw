@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+#MISE description="Show current version and release status"
+
+set -euo pipefail
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "Release Status"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+# Current version from package.json
+CURRENT_VERSION=$(node -p "require('./package.json').version")
+echo "Current version:     $CURRENT_VERSION"
+
+# Latest git tag
+LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "none")
+echo "Latest git tag:      $LATEST_TAG"
+
+# Last commit hash
+LAST_COMMIT=$(git rev-parse --short HEAD)
+echo "Last commit:         $LAST_COMMIT"
+
+# Last commit message
+LAST_MESSAGE=$(git log -1 --pretty=%B)
+echo "Last commit msg:     $LAST_MESSAGE"
+
+# Check for commits since last tag
+if [[ "$LATEST_TAG" != "none" ]]; then
+    COMMITS_SINCE=$(git log "$LATEST_TAG"..HEAD --oneline | wc -l)
+    echo "Commits since tag:   $COMMITS_SINCE"
+fi
+
+# Check git branch
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+echo "Current branch:      $BRANCH"
+
+# Check if working directory is clean
+if git status --porcelain | grep -q .; then
+    echo "Working dir:         ⚠ dirty"
+else
+    echo "Working dir:         ✓ clean"
+fi
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════"

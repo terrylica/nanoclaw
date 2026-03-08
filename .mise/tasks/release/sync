@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Phase 3: Sync release to origin/main (semantic-release usually does this, but ensure it's pushed)"
+
+set -euo pipefail
+
+echo "→ Phase 3: Syncing to origin/main"
+echo ""
+
+# semantic-release should have already pushed tags and commits
+# This task ensures everything is pushed
+echo "Verifying all tags and commits are pushed..."
+git push --follow-tags origin main
+
+echo ""
+echo "✓ Sync complete"

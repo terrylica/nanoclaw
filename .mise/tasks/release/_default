@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Release task help and navigation"
+
+echo "Release tasks available:"
+echo ""
+echo "  mise run release:preflight    — Pre-release checks (clean git, auth, dependencies)"
+echo "  mise run release:version      — Bump version and generate changelog via semantic-release"
+echo "  mise run release:sync         — Push tags and release to origin/main"
+echo "  mise run release:verify       — Verify GitHub release was created"
+echo "  mise run release:postflight   — Post-release validation (clean state)"
+echo "  mise run release:full         — Orchestrate all phases (preflight → version → sync → verify → postflight)"
+echo "  mise run release:dry          — Dry-run: show what would be released without committing"
+echo "  mise run release:status       — Show current version and last release info"
+echo ""
+echo "Quick start:"
+echo "  mise run release:full         — Full release pipeline"

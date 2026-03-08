@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Phase 2: Bump version and generate changelog via semantic-release"
+#MISE depends=["release:preflight"]
+
+set -euo pipefail
+
+echo "→ Phase 2: Versioning with semantic-release"
+echo ""
+
+# Verify semantic-release is installed
+if ! npm ls semantic-release >/dev/null 2>&1; then
+    echo "FAIL: semantic-release not installed"
+    exit 1
+fi
+
+# Run semantic-release (respects GH_TOKEN from environment)
+echo "Running semantic-release..."
+npx semantic-release
+
+echo ""
+echo "✓ Version bump complete"

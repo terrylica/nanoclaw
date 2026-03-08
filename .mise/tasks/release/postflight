@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#MISE description="Phase 5: Post-release validation (clean state, no uncommitted changes, no unpushed commits)"
+
+set -euo pipefail
+
+echo "→ Phase 5: Postflight validation"
+echo ""
+
+ERRORS=0
+
+# 1. Reset lockfile drift (from npm install, npm update, etc.)
+LOCKFILE_DRIFT=$(git diff --name-only | grep -E '^(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb)$' || true)
+if [[ -n "$LOCKFILE_DRIFT" ]]; then
+    echo "Lockfile drift detected — resetting (build artifact)"
+    echo "$LOCKFILE_DRIFT" | xargs git checkout --
+fi
+
+# 2. Check for uncommitted changes
+DIRTY=$(git status --porcelain)
+if [[ -n "$DIRTY" ]]; then
+    echo "FAIL: Uncommitted changes detected:"
+    echo "$DIRTY" | head -20
+    ERRORS=$((ERRORS + 1))
+fi
+
+# 3. Check for unpushed commits
+UNPUSHED=$(git log --oneline @{u}..HEAD 2>/dev/null || echo "")
+if [[ -n "$UNPUSHED" ]]; then
+    echo "FAIL: Unpushed commits:"
+    echo "$UNPUSHED"
+    ERRORS=$((ERRORS + 1))
+fi
+
+# 4. Verify tags are pushed
+if ! git ls-remote --tags origin | grep -q "$(git describe --tags --abbrev=0)"; then
+    echo "WARN: Latest tag may not be pushed to origin"
+fi
+
+if [[ $ERRORS -gt 0 ]]; then
+    echo ""
+    echo "Postflight FAILED ($ERRORS issue(s))"
+    exit 1
+fi
+
+echo ""
+echo "✓ Postflight PASSED — clean landing"

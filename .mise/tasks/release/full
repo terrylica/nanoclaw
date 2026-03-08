@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#MISE description="Phase 1-5: Full release orchestration (preflight → version → sync → verify → postflight)"
+#MISE depends=["release:preflight"]
+
+set -euo pipefail
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "NanoClaw Full Release Pipeline"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+# Phase 1: Preflight (already run via depends, but explicit for clarity)
+echo "[1/5] Running preflight checks..."
+mise run release:preflight
+echo ""
+
+# Phase 2: Version
+echo "[2/5] Bumping version with semantic-release..."
+mise run release:version
+echo ""
+
+# Phase 3: Sync
+echo "[3/5] Syncing to origin/main..."
+mise run release:sync
+echo ""
+
+# Phase 4: Verify
+echo "[4/5] Verifying GitHub release..."
+mise run release:verify
+echo ""
+
+# Phase 5: Postflight
+echo "[5/5] Post-release validation..."
+mise run release:postflight
+echo ""
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "✓ Release complete!"
+echo "═══════════════════════════════════════════════════════════════"

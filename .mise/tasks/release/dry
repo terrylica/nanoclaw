@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#MISE description="Dry-run: Show what would be released without modifying git state"
+
+set -euo pipefail
+
+echo "→ Dry-run: semantic-release --dry-run"
+echo ""
+
+# Verify semantic-release is installed
+if ! npm ls semantic-release >/dev/null 2>&1; then
+    npm install --save-dev semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github
+fi
+
+# Run semantic-release in dry-run mode
+echo "Running semantic-release with --dry-run..."
+npx semantic-release --dry-run
+
+echo ""
+echo "✓ Dry-run complete — no changes made"
