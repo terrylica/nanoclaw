@@ -704,7 +704,10 @@ function chunkFilesForContext(
         : content;
     const block = `--- ${f} (${content.length} bytes) ---\n${truncated}\n`;
 
-    if (currentLen + block.length > CHUNK_CHAR_BUDGET && currentFiles.length > 0) {
+    if (
+      currentLen + block.length > CHUNK_CHAR_BUDGET &&
+      currentFiles.length > 0
+    ) {
       chunks.push({ files: [...currentFiles], sourceContext: currentSource });
       currentFiles = [];
       currentSource = '';
@@ -1001,10 +1004,15 @@ async function runAlgoScanCycle(
   const headCommit = getHeadCommit(config.repoPath);
   state.algoScanCount = (state.algoScanCount || 0) + 1;
   const scanNum = state.algoScanCount;
+  const tid = traceId();
 
   const tg = async (msg: string) => {
     if (botToken && chatId) {
-      await sendTelegramNotification(msg, botToken, chatId);
+      await sendTelegramNotification(
+        `<code>[${tid}]</code> ${msg}`,
+        botToken,
+        chatId,
+      );
     }
   };
 
@@ -1031,7 +1039,11 @@ async function runAlgoScanCycle(
     const rawFindings = scanResult.findings;
 
     logger.info(
-      { findingCount: rawFindings.length, totalFiles: scanResult.totalFiles, chunks: scanResult.chunksScanned },
+      {
+        findingCount: rawFindings.length,
+        totalFiles: scanResult.totalFiles,
+        chunks: scanResult.chunksScanned,
+      },
       'Algo scan Layer 1 (MiniMax) complete — whole repo',
     );
 
@@ -2913,11 +2925,16 @@ async function runProactiveScanCycle(
   const headCommit = getHeadCommit(config.repoPath);
   state.proactiveScanCount = (state.proactiveScanCount || 0) + 1;
   const scanNum = state.proactiveScanCount;
+  const tid = traceId();
 
-  // Helper to send Telegram with layer info
+  // Helper to send Telegram with layer info — auto-prepends trace ID
   const tg = async (msg: string) => {
     if (botToken && chatId) {
-      await sendTelegramNotification(msg, botToken, chatId);
+      await sendTelegramNotification(
+        `<code>[${tid}]</code> ${msg}`,
+        botToken,
+        chatId,
+      );
     }
   };
 
@@ -2937,14 +2954,15 @@ async function runProactiveScanCycle(
 
   try {
     // ── Layer 1: MiniMax Expert Scan (whole repo, chunked) ──
-    const scanResult = await runProactiveScan(
-      config.repoPath,
-      minimaxKey,
-    );
+    const scanResult = await runProactiveScan(config.repoPath, minimaxKey);
     const rawFindings = scanResult.findings;
 
     logger.info(
-      { findingCount: rawFindings.length, totalFiles: scanResult.totalFiles, chunks: scanResult.chunksScanned },
+      {
+        findingCount: rawFindings.length,
+        totalFiles: scanResult.totalFiles,
+        chunks: scanResult.chunksScanned,
+      },
       'Proactive scan Layer 1 (MiniMax) complete — whole repo',
     );
 
@@ -3396,6 +3414,9 @@ export async function startOrchestratorLoop(
         continue;
       }
 
+      // Trace ID for this diff cycle — prepended to all Telegram messages
+      const cycleTid = traceId();
+
       const diff = getDiff(config.repoPath, state.lastCheckedCommit);
       const commitLog = getCommitLog(config.repoPath, state.lastCheckedCommit);
       const semanticDiff = getSemanticDiffs(
@@ -3411,6 +3432,7 @@ export async function startOrchestratorLoop(
 
       logger.info(
         {
+          traceId: cycleTid,
           files: changedFiles.length,
           commits: commitLog.split('\n').length,
           from: state.lastCheckedCommit.slice(0, 7),
@@ -3425,12 +3447,13 @@ export async function startOrchestratorLoop(
       // Telegram: cycle start notification
       if (botToken && chatId) {
         await sendTelegramNotification(
-          formatCycleStart(
-            state.lastCheckedCommit,
-            headCommit,
-            changedFiles,
-            state.cycleCount + 1,
-          ),
+          `<code>[${cycleTid}]</code> ` +
+            formatCycleStart(
+              state.lastCheckedCommit,
+              headCommit,
+              changedFiles,
+              state.cycleCount + 1,
+            ),
           botToken,
           chatId,
         );
@@ -3456,11 +3479,12 @@ export async function startOrchestratorLoop(
       // Telegram: triage results
       if (botToken && chatId) {
         await sendTelegramNotification(
-          formatTriageResult(
-            triage.findings.length,
-            triage.summary,
-            state.cycleCount + 1,
-          ),
+          `<code>[${cycleTid}]</code> ` +
+            formatTriageResult(
+              triage.findings.length,
+              triage.summary,
+              state.cycleCount + 1,
+            ),
           botToken,
           chatId,
         );
@@ -3570,7 +3594,8 @@ export async function startOrchestratorLoop(
         // Telegram notification per confirmed finding
         if (botToken && chatId) {
           await sendTelegramNotification(
-            formatFindingNotification(finding, validation, issueUrl),
+            `<code>[${cycleTid}]</code> ` +
+              formatFindingNotification(finding, validation, issueUrl),
             botToken,
             chatId,
           );
@@ -3580,14 +3605,15 @@ export async function startOrchestratorLoop(
       // Telegram: cycle summary (only when there were findings to process)
       if (triage.findings.length > 0 && botToken && chatId) {
         await sendTelegramNotification(
-          formatCycleSummary(
-            state.cycleCount + 1,
-            triage.findings.length,
-            cycleValidated,
-            cycleRejected,
-            cycleIssues,
-            cycleSkipped,
-          ),
+          `<code>[${cycleTid}]</code> ` +
+            formatCycleSummary(
+              state.cycleCount + 1,
+              triage.findings.length,
+              cycleValidated,
+              cycleRejected,
+              cycleIssues,
+              cycleSkipped,
+            ),
           botToken,
           chatId,
         );
