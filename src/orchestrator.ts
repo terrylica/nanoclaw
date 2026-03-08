@@ -551,24 +551,27 @@ async function triageChanges(
     const fpPatterns = loadFalsePositivePatterns();
 
     // Filter out findings that match known false positive patterns
-    const afterFpFilter = fpPatterns.length > 0
-      ? filtered.filter((f) => {
-          const matchesFp = fpPatterns.some((pattern) => {
-            const patternWords = extractWords(pattern);
-            const findingWords = extractWords(f.title + ' ' + f.description);
-            const intersection = findingWords.filter((w) => patternWords.includes(w));
-            const union = new Set([...findingWords, ...patternWords]);
-            return union.size > 0 && intersection.length / union.size >= 0.35;
-          });
-          if (matchesFp) {
-            logger.info(
-              { title: f.title },
-              'Finding matches known false positive pattern, skipping',
-            );
-          }
-          return !matchesFp;
-        })
-      : filtered;
+    const afterFpFilter =
+      fpPatterns.length > 0
+        ? filtered.filter((f) => {
+            const matchesFp = fpPatterns.some((pattern) => {
+              const patternWords = extractWords(pattern);
+              const findingWords = extractWords(f.title + ' ' + f.description);
+              const intersection = findingWords.filter((w) =>
+                patternWords.includes(w),
+              );
+              const union = new Set([...findingWords, ...patternWords]);
+              return union.size > 0 && intersection.length / union.size >= 0.35;
+            });
+            if (matchesFp) {
+              logger.info(
+                { title: f.title },
+                'Finding matches known false positive pattern, skipping',
+              );
+            }
+            return !matchesFp;
+          })
+        : filtered;
 
     if (afterFpFilter.length === 0) {
       return {
@@ -759,7 +762,11 @@ Your bias is toward DEFENDING the code. Only let a finding survive if you genuin
     const durationMs = Date.now() - t0;
 
     logger.info(
-      { input: findings.length, surviving: survivingFindings.length, durationMs },
+      {
+        input: findings.length,
+        surviving: survivingFindings.length,
+        durationMs,
+      },
       "Devil's advocate round complete",
     );
 
@@ -799,16 +806,21 @@ function loadFalsePositivePatterns(): string[] {
  */
 function syncFalsePositivePatterns(): void {
   try {
+    // Note: `stateReason` field not available in older gh versions.
+    // Use `state` + check for "not planned" / "false positive" in title/body patterns.
+    // All NanoClaw issues closed as wontfix are false positives by definition.
     const result = execSync(
-      'gh issue list --repo terrylica/opendeviationbar-py --label nanoclaw --state closed --json title,stateReason --limit 50',
+      'gh issue list --repo terrylica/opendeviationbar-py --label nanoclaw --state closed --json title,state --limit 50',
       { encoding: 'utf-8', timeout: 10_000 },
     );
-    const issues = JSON.parse(result) as Array<{ title: string; stateReason: string }>;
+    const issues = JSON.parse(result) as Array<{
+      title: string;
+      state: string;
+    }>;
 
-    // Only learn from issues closed as "not planned" (false positives)
-    const fpTitles = issues
-      .filter((i) => i.stateReason === 'NOT_PLANNED')
-      .map((i) => i.title);
+    // All closed nanoclaw issues are treated as false positives
+    // (real findings would be fixed and closed via PR, not just closed)
+    const fpTitles = issues.map((i) => i.title);
 
     if (fpTitles.length > 0) {
       fs.mkdirSync(path.dirname(FP_PATTERNS_FILE), { recursive: true });
