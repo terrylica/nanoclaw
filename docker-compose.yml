@@ -1,0 +1,67 @@
+# NanoClaw Continuous Validation System
+# Self-contained deployment for bigblack Linux workstation
+#
+# Usage:
+#   docker compose up -d          # start
+#   docker compose logs -f        # follow logs
+#   docker compose down           # stop
+#
+# Prerequisites:
+#   - Clone opendeviationbar-py to ~/eon/opendeviationbar-py on bigblack
+#   - Set environment variables in .env (see .env.example)
+#   - Build agent image: docker compose build agent
+#   - gh auth login (for issue creation)
+
+services:
+  nanoclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile.host
+    container_name: nanoclaw-host
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY}
+      - CONTAINER_IMAGE=nanoclaw-agent:slim
+      - CONTAINER_TIMEOUT=1800000
+      - IDLE_TIMEOUT=300000
+      - MAX_CONCURRENT_CONTAINERS=2
+      - TZ=${TZ:-America/Vancouver}
+      - ASSISTANT_NAME=${ASSISTANT_NAME:-NanoClaw}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      # Docker socket for spawning agent containers (DinD pattern)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent data (SQLite, sessions, IPC)
+      - nanoclaw-data:/app/data
+      - nanoclaw-store:/app/store
+      - nanoclaw-groups:/app/groups
+      # opendeviationbar-py source (read-only)
+      - ${ODB_REPO_PATH:-~/eon/opendeviationbar-py}:/workspace/odb:ro
+      # gh CLI config for issue creation
+      - ${HOME}/.config/gh:/home/node/.config/gh:ro
+    networks:
+      - nanoclaw
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Pre-built slim agent image (no Chromium)
+  agent:
+    build:
+      context: ./container
+      dockerfile: Dockerfile.slim
+    image: nanoclaw-agent:slim
+    profiles:
+      - build-only
+
+volumes:
+  nanoclaw-data:
+  nanoclaw-store:
+  nanoclaw-groups:
+
+networks:
+  nanoclaw:
+    driver: bridge
