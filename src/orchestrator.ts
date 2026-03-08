@@ -2243,6 +2243,7 @@ Respond with a brief summary of what you changed (or "No changes needed" if the 
 async function runClaudeMdMaintenance(
   repoPath: string,
   changedFiles: string[],
+  headCommit: string,
   botToken: string,
   chatId: string,
 ): Promise<void> {
@@ -2312,19 +2313,68 @@ async function runClaudeMdMaintenance(
 
     const output = result.stdout.trim();
     const summary = output.slice(0, 500);
+    const isNoChanges =
+      output.toLowerCase().includes('no changes needed') ||
+      output.toLowerCase().includes('already up to date');
 
-    logger.info({ summary }, 'CLAUDE.md maintenance complete');
+    logger.info({ summary, isNoChanges }, 'CLAUDE.md maintenance complete');
+
+    // Create GitHub issue documenting the maintenance work
+    let issueUrl: string | null = null;
+    if (!isNoChanges && targetRepo) {
+      const commitShort = headCommit.slice(0, 7);
+      const issueBody = `---
+nanoclaw-type: claude-md-maintenance
+files:
+${changedFiles.map((f) => `  - ${f}`).join('\n')}
+commit: ${commitShort}
+---
+
+## CLAUDE.md Maintenance
+
+Triggered by ${changedFiles.length} changed file${changedFiles.length !== 1 ? 's' : ''} in commit \`${commitShort}\`.
+
+### Changes Made
+
+${output.slice(0, 3000)}
+
+### Changed Files That Triggered This Update
+
+${changedFiles.map((f) => `- \`${f}\``).join('\n')}
+
+---
+*Auto-created by [NanoClaw](https://github.com/terrylica/nanoclaw) CLAUDE.md maintenance*`;
+
+      const title = `docs: CLAUDE.md maintenance for ${commitShort} — ${changedFiles.length} file${changedFiles.length !== 1 ? 's' : ''} changed`;
+      try {
+        const tmpFile = path.join(DATA_DIR, 'claude-md-issue.tmp.md');
+        fs.writeFileSync(tmpFile, issueBody);
+        const ghResult = execSync(
+          `gh issue create --repo ${targetRepo} --title "${title.replace(/"/g, '\\"')}" --label "nanoclaw,documentation" --body-file "${tmpFile}"`,
+          { cwd: repoPath, encoding: 'utf-8', timeout: 15_000 },
+        );
+        try {
+          fs.unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        issueUrl = ghResult.trim();
+        logger.info({ issueUrl }, 'CLAUDE.md maintenance issue created');
+      } catch (err) {
+        logger.warn({ err }, 'Failed to create CLAUDE.md maintenance issue');
+      }
+    }
 
     if (botToken && chatId) {
-      await sendTelegramNotification(
-        [
-          `<b>📝 CLAUDE.md Maintenance — Done</b>`,
-          ``,
-          `<i>${escapeHtml(summary)}</i>`,
-        ].join('\n'),
-        botToken,
-        chatId,
-      );
+      const lines = [
+        `<b>📝 CLAUDE.md Maintenance — Done</b>`,
+        ``,
+        `<i>${escapeHtml(summary)}</i>`,
+      ];
+      if (issueUrl) {
+        lines.push(``, `<b>📋 Issue</b>: ${issueUrl}`);
+      }
+      await sendTelegramNotification(lines.join('\n'), botToken, chatId);
     }
   } catch (err) {
     logger.error({ err }, 'CLAUDE.md maintenance error');
@@ -3033,6 +3083,7 @@ export async function startOrchestratorLoop(
       await runClaudeMdMaintenance(
         config.repoPath,
         changedFiles,
+        headCommit,
         botToken,
         chatId,
       );
