@@ -72,6 +72,8 @@ interface OrchestratorState {
   lastHeartbeat: string;
   lastProactiveScan?: string; // ISO timestamp of last proactive enhancement scan
   proactiveScanIndex?: number; // Index into file list for round-robin scanning
+  lastAlgoScan?: string; // ISO timestamp of last algo correctness scan
+  algoScanIndex?: number; // Index into file list for round-robin algo scanning
   startedAt: string;
   consecutiveErrors: number;
   findingsValidated: number;
@@ -724,6 +726,76 @@ If nothing warrants attention, respond with: []
 
 JSON:`;
 
+const PROACTIVE_ALGO_CORRECTNESS_PROMPT = `You are an algorithm correctness and mathematical consistency expert reviewing existing code in a Rust+Python (maturin) financial data processing library called opendeviationbar-py.
+
+Your job is to find ALGORITHMIC INCONSISTENCIES and FALLACIOUS IMPLEMENTATIONS. Scan the code for these specific patterns:
+
+## NUMERICAL ERRORS
+- Floating-point comparison with == instead of epsilon-based comparison
+- Integer overflow/underflow in arithmetic (especially with u32, u64, i64 in Rust)
+- Division by zero not guarded (especially in averages, ratios, percentages)
+- Loss of precision: f64 → f32 or float → int truncation that drops significant data
+- Accumulation of floating-point errors in running sums/averages (use Kahan summation?)
+- Wrong rounding mode for financial calculations (banker's rounding vs truncation)
+
+## ALGORITHM LOGIC BUGS
+- Off-by-one errors in range bounds, slicing, indexing (fencepost errors)
+- Incorrect boundary conditions: empty collections, single-element, max values
+- Wrong sort order assumptions (ascending vs descending, stable vs unstable)
+- Incorrect merge/join logic (missing entries, duplicates, wrong key matching)
+- State machines with unreachable states or missing transitions
+- Incorrect time zone handling or daylight saving edge cases
+- Wrong comparison operators (< vs <=, > vs >=) in financial thresholds
+
+## STATISTICAL FALLACIES
+- Mean used where median is appropriate (skewed data, outliers)
+- Sample statistics applied to population or vice versa
+- Incorrect standard deviation: population vs sample (N vs N-1 divisor)
+- Correlation treated as causation in trading signals
+- Survivorship bias in backtesting data selection
+- Look-ahead bias: using future data in calculations that should only see past
+- Wrong normalization (min-max vs z-score vs percentage) for the data distribution
+
+## CONCURRENCY & ORDERING BUGS
+- Non-atomic read-modify-write on shared state
+- Assumed ordering that isn't guaranteed (HashMap iteration, async results)
+- Race between checking a condition and acting on it (TOCTOU)
+- Missing synchronization on mutable state accessed from multiple coroutines
+- Event ordering assumptions in stream processing (out-of-order ticks)
+
+## DATA INTEGRITY
+- Silently dropping error rows instead of handling them (NaN propagation)
+- Inconsistent null/None/NaN handling across pipeline stages
+- Checksum/hash computed on wrong fields or wrong byte order
+- Timestamps compared across different resolutions (seconds vs milliseconds vs nanoseconds)
+- Incorrect serialization/deserialization of financial amounts (string vs float vs decimal)
+
+TARGET: opendeviationbar-py processes high-frequency financial tick data with deviation bar aggregation. Algorithmic correctness directly impacts trading decisions. The codebase has 10 Rust crates and 4 Python daemons processing real money.
+
+IMPORTANT:
+- Only report findings with CONCRETE evidence: cite the exact function, line pattern, and the specific logical error
+- Explain WHY it's wrong: show the expected behavior vs actual behavior with an example input
+- A finding without a specific code location and logical proof is worthless
+- Focus on correctness bugs that produce WRONG RESULTS silently (not crashes)
+- Use type "bug" for correctness issues, "performance-regression" for degraded accuracy
+
+Respond with a JSON array. Each finding:
+- type: "bug" or "performance-regression"
+- severity: "high" for wrong financial calculations, "critical" for data corruption, "medium" for edge cases
+- confidence: 1-5 (5 = exact proof with example input/output)
+- title: specific, e.g. "Off-by-one in gap detection causes missed gaps at shard boundary"
+- description: what the code does wrong, expected vs actual behavior, example triggering input
+- files: affected file paths
+- validation: command to verify (e.g. specific test to run, grep for the pattern)
+
+Only report findings with confidence >= 4.
+If nothing warrants attention, respond with: []
+
+JSON:`;
+
+const ALGO_SCAN_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours between algo scans
+const ALGO_SCAN_BATCH_SIZE = 3;
+
 /**
  * Get all scannable source files in the repo, sorted by size (largest first,
  * as they're most likely to have optimization opportunities).
@@ -815,6 +887,374 @@ ${PROACTIVE_ENHANCEMENT_PROMPT}`;
     logger.warn({ err }, 'Proactive scan MiniMax query failed');
     return [];
   }
+}
+
+/**
+ * Run a proactive algo correctness scan on a batch of files.
+ * Uses MiniMax to analyze existing code for algorithmic inconsistencies.
+ */
+async function runAlgoCorrectnessScan(
+  repoPath: string,
+  apiKey: string,
+  state: OrchestratorState,
+): Promise<Finding[]> {
+  const allFiles = getScannableFiles(repoPath);
+  if (allFiles.length === 0) return [];
+
+  const startIdx = (state.algoScanIndex || 0) % allFiles.length;
+  const batch = [];
+  for (let i = 0; i < ALGO_SCAN_BATCH_SIZE && i < allFiles.length; i++) {
+    batch.push(allFiles[(startIdx + i) % allFiles.length]);
+  }
+
+  state.algoScanIndex = (startIdx + ALGO_SCAN_BATCH_SIZE) % allFiles.length;
+
+  const sourceContext = batch
+    .map((f) => {
+      const content = readRepoFile(repoPath, f);
+      if (!content) return '';
+      const truncated =
+        content.length > 15_000
+          ? content.slice(0, 15_000) + '\n... (truncated)'
+          : content;
+      return `--- ${f} (${content.length} bytes) ---\n${truncated}\n`;
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  if (!sourceContext) return [];
+
+  const prompt = `FILES BEING SCANNED (${batch.length} files, algo correctness scan):
+${batch.join('\n')}
+
+FULL SOURCE CODE:
+${sourceContext.slice(0, 60_000)}
+
+${PROACTIVE_ALGO_CORRECTNESS_PROMPT}`;
+
+  logger.info(
+    { files: batch, startIdx, totalFiles: allFiles.length },
+    'Running proactive algo correctness scan',
+  );
+
+  try {
+    const raw = await queryMiniMax(prompt, apiKey);
+    const findings = parseMiniMaxFindings(raw);
+    return findings.map((f) => ({
+      ...f,
+      sourcePerspectives: ['proactive-algo-correctness'],
+    }));
+  } catch (err) {
+    logger.warn({ err }, 'Algo correctness scan MiniMax query failed');
+    return [];
+  }
+}
+
+/**
+ * Run a full algo correctness scan cycle with 7-layer FP prevention.
+ * Same pipeline as enhancement scans but with algo correctness prompt.
+ */
+async function runAlgoScanCycle(
+  config: OrchestratorConfig,
+  state: OrchestratorState,
+  minimaxKey: string,
+  botToken: string,
+  chatId: string,
+): Promise<void> {
+  const headCommit = getHeadCommit(config.repoPath);
+  const scanIdx = state.algoScanIndex || 0;
+  const batchNum = Math.floor(scanIdx / ALGO_SCAN_BATCH_SIZE) + 1;
+
+  const tg = async (msg: string) => {
+    if (botToken && chatId) {
+      await sendTelegramNotification(msg, botToken, chatId);
+    }
+  };
+
+  // ── Layer 0: Scan Start ──
+  await tg(
+    [
+      `<b>🧮 Algo Correctness Scan #${batchNum}</b>`,
+      ``,
+      `Scanning ${ALGO_SCAN_BATCH_SIZE} files for algorithmic inconsistencies...`,
+      `<i>7-layer validation pipeline active</i>`,
+      ``,
+      `<i>Categories: numerical errors, logic bugs, statistical fallacies, concurrency, data integrity</i>`,
+    ].join('\n'),
+  );
+
+  try {
+    // ── Layer 1: MiniMax Expert Scan ──
+    const rawFindings = await runAlgoCorrectnessScan(
+      config.repoPath,
+      minimaxKey,
+      state,
+    );
+
+    logger.info(
+      { findingCount: rawFindings.length },
+      'Algo scan Layer 1 (MiniMax) complete',
+    );
+
+    await tg(
+      [
+        `<b>🧮 Layer 1: MiniMax Expert Scan</b>`,
+        `• Raw findings: <code>${rawFindings.length}</code>`,
+        rawFindings.length > 0
+          ? rawFindings.map((f) => `  → ${f.title.slice(0, 80)}`).join('\n')
+          : `  <i>No algo issues found in this batch</i>`,
+      ].join('\n'),
+    );
+
+    if (rawFindings.length === 0) {
+      await tg(
+        `<b>🧮 Scan #${batchNum} Complete</b>\n\nNo findings — all ${ALGO_SCAN_BATCH_SIZE} files clean.\n<i>Next scan in ~4 hours</i>`,
+      );
+      return;
+    }
+
+    // ── Layer 2: Confidence Gate ──
+    const confidentFindings = rawFindings.filter(
+      (f) => (f.confidence ?? 0) >= 4,
+    );
+
+    await tg(
+      [
+        `<b>🧮 Layer 2: Confidence Gate (≥4/5)</b>`,
+        `• Passed: <code>${confidentFindings.length}/${rawFindings.length}</code>`,
+      ].join('\n'),
+    );
+
+    if (confidentFindings.length === 0) {
+      await tg(
+        `<b>🧮 Scan #${batchNum} Complete</b>\n\nAll findings below confidence threshold.\n<i>Next scan in ~4 hours</i>`,
+      );
+      return;
+    }
+
+    // ── Layer 3: FP Pattern DB ──
+    const fpPatterns = loadFalsePositivePatterns();
+    const afterFpFilter =
+      fpPatterns.length > 0
+        ? confidentFindings.filter((f) => {
+            const matchesFp = fpPatterns.some((pattern) => {
+              const patternWords = extractWords(pattern);
+              const findingWords = extractWords(f.title + ' ' + f.description);
+              const intersection = findingWords.filter((w) =>
+                patternWords.includes(w),
+              );
+              const union = new Set([...findingWords, ...patternWords]);
+              return union.size > 0 && intersection.length / union.size >= 0.35;
+            });
+            return !matchesFp;
+          })
+        : confidentFindings;
+
+    await tg(
+      [
+        `<b>🧮 Layer 3: FP Pattern DB</b>`,
+        `• Known FP patterns: <code>${fpPatterns.length}</code>`,
+        `• Passed: <code>${afterFpFilter.length}/${confidentFindings.length}</code>`,
+      ].join('\n'),
+    );
+
+    if (afterFpFilter.length === 0) {
+      await tg(
+        `<b>🧮 Scan #${batchNum} Complete</b>\n\nAll findings matched known FP patterns.\n<i>Next scan in ~4 hours</i>`,
+      );
+      return;
+    }
+
+    // ── Layer 4: Consensus Round ──
+    const scannedFiles = getScannableFiles(config.repoPath);
+    const batchFiles: string[] = [];
+    for (let i = 0; i < ALGO_SCAN_BATCH_SIZE && i < scannedFiles.length; i++) {
+      batchFiles.push(
+        scannedFiles[
+          (scanIdx - ALGO_SCAN_BATCH_SIZE + i + scannedFiles.length) %
+            scannedFiles.length
+        ],
+      );
+    }
+
+    const consensusFindings = await runConsensusRound(
+      afterFpFilter,
+      '',
+      batchFiles,
+      minimaxKey,
+      config.repoPath,
+    );
+
+    await tg(
+      [
+        `<b>🧮 Layer 4: Consensus Round</b>`,
+        `• Survived: <code>${consensusFindings.length}/${afterFpFilter.length}</code>`,
+      ].join('\n'),
+    );
+
+    if (consensusFindings.length === 0) {
+      await tg(
+        `<b>🧮 Scan #${batchNum} Complete</b>\n\nAll findings rejected at consensus.\n<i>Next scan in ~4 hours</i>`,
+      );
+      return;
+    }
+
+    // ── Layer 5: Devil's Advocate ──
+    const advocateFindings = await runDevilsAdvocateRound(
+      consensusFindings,
+      batchFiles,
+      minimaxKey,
+      config.repoPath,
+    );
+
+    await tg(
+      [
+        `<b>🧮 Layer 5: Devil's Advocate</b>`,
+        `• Survived: <code>${advocateFindings.length}/${consensusFindings.length}</code>`,
+      ].join('\n'),
+    );
+
+    if (advocateFindings.length === 0) {
+      await tg(
+        `<b>🧮 Scan #${batchNum} Complete</b>\n\nAll findings disproved by devil's advocate.\n<i>Next scan in ~4 hours</i>`,
+      );
+      return;
+    }
+
+    // ── Layers 6 & 7: Per-finding validation ──
+    let scanValidated = 0;
+    let scanIssues = 0;
+    const scanSkipped: string[] = [];
+    const issueUrls: string[] = [];
+
+    for (const finding of advocateFindings) {
+      if (!checkRateLimit(state)) {
+        scanSkipped.push('Rate limit reached');
+        break;
+      }
+
+      if (issueExistsFuzzy(finding.title)) {
+        scanSkipped.push(`Duplicate: ${finding.title.slice(0, 60)}`);
+        continue;
+      }
+
+      // ── Layer 6: Verification Script ──
+      const scriptCheck = verifyFindingScript(finding, config.repoPath);
+      if (!scriptCheck.verified) {
+        state.findingsRejected++;
+        scanSkipped.push(`Script fail: ${finding.title.slice(0, 60)}`);
+        await tg(
+          `<b>🧮 Layer 6: Script Check ❌</b>\n<code>${finding.title.slice(0, 80)}</code>\n<i>Verification script failed</i>`,
+        );
+        continue;
+      }
+
+      await tg(
+        `<b>🧮 Layer 6: Script Check ✅</b>\n<code>${finding.title.slice(0, 80)}</code>`,
+      );
+
+      // ── Layer 7: Claude Code Validation ──
+      await tg(
+        `<b>🧮 Layer 7: Claude Validation 🧠</b>\n<code>${finding.title.slice(0, 80)}</code>\n<i>Running claude -p...</i>`,
+      );
+
+      const validation = validateWithClaude(
+        finding,
+        config.repoPath,
+        headCommit,
+      );
+
+      if (!validation) {
+        scanSkipped.push(`Claude unavail: ${finding.title.slice(0, 60)}`);
+        continue;
+      }
+
+      if (!validation.confirmed || validation.confidence === 'low') {
+        state.findingsRejected++;
+        scanSkipped.push(`Rejected: ${finding.title.slice(0, 60)}`);
+        await tg(
+          [
+            `<b>🧮 Layer 7: Claude ❌</b>`,
+            `<code>${finding.title.slice(0, 80)}</code>`,
+            `<i>${validation.analysis.slice(0, 200)}</i>`,
+          ].join('\n'),
+        );
+        continue;
+      }
+
+      // ── ALL 7 LAYERS PASSED — Create GitHub Issue ──
+      state.findingsValidated++;
+      scanValidated++;
+
+      const labels = await suggestLabels(finding, validation, minimaxKey);
+      const issueUrl = createGitHubIssue(
+        finding,
+        validation,
+        config.repoPath,
+        headCommit,
+        labels,
+      );
+
+      if (issueUrl) {
+        state.issuesCreated++;
+        if (!state.issueTimestamps) state.issueTimestamps = [];
+        state.issueTimestamps.push(Date.now());
+        scanIssues++;
+        issueUrls.push(issueUrl);
+      }
+
+      await tg(
+        [
+          `<b>🧮 Layer 7: Claude ✅ CONFIRMED</b>`,
+          `<code>${finding.title.slice(0, 80)}</code>`,
+          `Confidence: <code>${validation.confidence}</code>`,
+          `<i>${validation.analysis.slice(0, 200)}</i>`,
+          ``,
+          issueUrl ? `<b>📋 Issue</b>: ${issueUrl}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      );
+    }
+
+    // ── Final Summary with all issue links ──
+    const issueLines =
+      issueUrls.length > 0
+        ? [``, `<b>📋 Issues Created:</b>`, ...issueUrls.map((u) => `• ${u}`)]
+        : [];
+
+    await tg(
+      [
+        `<b>🧮 Algo Correctness Scan #${batchNum} Complete</b>`,
+        ``,
+        `<b>Pipeline results:</b>`,
+        `• Layer 1 (MiniMax Expert): <code>${rawFindings.length}</code> raw`,
+        `• Layer 2 (Confidence ≥4): <code>${confidentFindings.length}</code>`,
+        `• Layer 3 (FP Pattern DB): <code>${afterFpFilter.length}</code>`,
+        `• Layer 4 (Consensus): <code>${consensusFindings.length}</code>`,
+        `• Layer 5 (Devil's Advocate): <code>${advocateFindings.length}</code>`,
+        `• Layer 6+7 (Script+Claude): <code>${scanValidated}</code> confirmed`,
+        ``,
+        `• <b>Issues created: <code>${scanIssues}</code></b>`,
+        ...issueLines,
+        scanSkipped.length > 0
+          ? `• Skipped: ${scanSkipped.length} (${scanSkipped.slice(0, 3).join(', ')}${scanSkipped.length > 3 ? '...' : ''})`
+          : '',
+        ``,
+        `<i>Next algo scan in ~4 hours</i>`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  } catch (err) {
+    logger.warn({ err }, 'Algo correctness scan cycle failed (non-fatal)');
+    await tg(
+      `<b>🧮 Algo Scan Failed ⚠️</b>\n<i>${String(err).slice(0, 200)}</i>\n\n<i>Will retry in ~4 hours</i>`,
+    );
+  }
+
+  state.lastAlgoScan = new Date().toISOString();
+  saveState(state);
 }
 
 function buildTriagePrompt(
@@ -2853,11 +3293,14 @@ export async function startOrchestratorLoop(
       // Step 2: Check for changes
       const headCommit = getHeadCommit(config.repoPath);
       if (headCommit === state.lastCheckedCommit) {
-        // No new commits — check if it's time for a proactive enhancement scan
-        const lastScan = state.lastProactiveScan
+        // No new commits — check if it's time for proactive scans
+        const now = Date.now();
+
+        // Enhancement scan (memory efficiency)
+        const lastEnhScan = state.lastProactiveScan
           ? new Date(state.lastProactiveScan).getTime()
           : 0;
-        if (Date.now() - lastScan >= PROACTIVE_SCAN_INTERVAL_MS && minimaxKey) {
+        if (now - lastEnhScan >= PROACTIVE_SCAN_INTERVAL_MS && minimaxKey) {
           await runProactiveScanCycle(
             config,
             state,
@@ -2866,6 +3309,21 @@ export async function startOrchestratorLoop(
             chatId,
           );
         }
+
+        // Algo correctness scan (offset by 2 hours from enhancement)
+        const lastAlgoScan = state.lastAlgoScan
+          ? new Date(state.lastAlgoScan).getTime()
+          : 0;
+        if (now - lastAlgoScan >= ALGO_SCAN_INTERVAL_MS && minimaxKey) {
+          await runAlgoScanCycle(
+            config,
+            state,
+            minimaxKey,
+            botToken,
+            chatId,
+          );
+        }
+
         await sleep(CYCLE_COOLDOWN_MS);
         continue;
       }
