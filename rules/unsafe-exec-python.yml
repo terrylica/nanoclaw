@@ -1,0 +1,41 @@
+# Detect unsafe shell execution in Python
+# Matches os.system() calls and subprocess.call/run/Popen with shell=True.
+# These are genuine security concerns — command injection risk.
+#
+# Usage: ast-grep scan -r unsafe-exec-python.yml [path]
+
+id: unsafe-os-system
+language: python
+severity: error
+message: >-
+  os.system() is unsafe — vulnerable to shell injection.
+  Use subprocess.run() with a list of arguments instead.
+rule:
+  pattern: os.system($$$ARGS)
+---
+id: unsafe-subprocess-call-shell
+language: python
+severity: error
+message: >-
+  subprocess.call() with shell=True is vulnerable to shell injection.
+  Pass a list of arguments without shell=True instead.
+rule:
+  pattern: subprocess.call($$$ARGS, shell=True, $$$REST)
+---
+id: unsafe-subprocess-run-shell
+language: python
+severity: error
+message: >-
+  subprocess.run() with shell=True is vulnerable to shell injection.
+  Pass a list of arguments without shell=True instead.
+rule:
+  pattern: subprocess.run($$$ARGS, shell=True, $$$REST)
+---
+id: unsafe-subprocess-popen-shell
+language: python
+severity: error
+message: >-
+  subprocess.Popen() with shell=True is vulnerable to shell injection.
+  Pass a list of arguments without shell=True instead.
+rule:
+  pattern: subprocess.Popen($$$ARGS, shell=True, $$$REST)

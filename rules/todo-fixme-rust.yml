@@ -1,0 +1,22 @@
+# Detect TODO and FIXME comments in Rust code
+# Flags potentially unfinished work that should be tracked as issues.
+#
+# Usage: ast-grep scan -r todo-fixme-rust.yml [path]
+
+id: todo-comment-rust
+language: rust
+severity: hint
+message: >-
+  TODO comment found — consider creating a tracked issue for this work item.
+rule:
+  kind: line_comment
+  regex: "TODO"
+---
+id: fixme-comment-rust
+language: rust
+severity: warning
+message: >-
+  FIXME comment found — this indicates a known problem that needs attention.
+rule:
+  kind: line_comment
+  regex: "FIXME"

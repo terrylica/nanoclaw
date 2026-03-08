@@ -1,0 +1,30 @@
+# Detect broad exception catching with pass (extends bare-except-python.yml)
+# Catches: except Exception: pass, except BaseException: pass
+# The bare-except rule only catches `except: pass` (no type specified).
+#
+# Usage: ast-grep scan -r except-broad-pass-python.yml [path]
+
+id: except-broad-pass-python
+language: python
+severity: warning
+message: >-
+  Broad exception (Exception/BaseException) caught and silently ignored.
+  This hides real errors. Log the exception or handle it explicitly.
+rule:
+  kind: except_clause
+  all:
+    - has:
+        kind: identifier
+        regex: "^(Exception|BaseException)$"
+    - has:
+        kind: block
+        has:
+          kind: pass_statement
+        field: body
+  not:
+    inside:
+      kind: function_definition
+      has:
+        kind: identifier
+        regex: ^_force_
+      stopBy: end

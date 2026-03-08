@@ -1,0 +1,28 @@
+# Detect silent exception swallowing in Python
+# Matches except clauses where the body is only `pass`.
+# Excludes functions named `_force_*` which are best-effort by design
+# (see opendeviationbar-py Issue #231/#232 — `_force_allocator_purge` FP).
+#
+# Usage: ast-grep scan -r bare-except-python.yml [path]
+
+id: bare-except-python
+language: python
+severity: warning
+message: >-
+  Silent exception swallowing — except block contains only `pass`.
+  This hides real errors. Add a comment or log at DEBUG level.
+
+rule:
+  kind: except_clause
+  has:
+    kind: block
+    has:
+      kind: pass_statement
+    field: body
+  not:
+    inside:
+      kind: function_definition
+      has:
+        kind: identifier
+        regex: ^_force_
+      stopBy: end

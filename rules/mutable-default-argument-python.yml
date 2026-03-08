@@ -1,0 +1,19 @@
+# Detect mutable default arguments in Python functions
+# def foo(x=[]): is a classic Python bug — the list is shared across calls.
+#
+# Usage: ast-grep scan -r mutable-default-argument-python.yml [path]
+
+id: mutable-default-argument-python
+language: python
+severity: warning
+message: >-
+  Mutable default argument detected. Default mutable arguments are shared
+  across all calls. Use None as default and create inside the function body.
+rule:
+  kind: default_parameter
+  has:
+    field: value
+    any:
+      - kind: list
+      - kind: dictionary
+      - kind: set

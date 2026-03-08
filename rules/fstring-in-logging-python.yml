@@ -1,0 +1,29 @@
+# Detect f-strings in logging calls (should use lazy % formatting)
+# f-strings are evaluated eagerly even when the log level is disabled.
+#
+# Usage: ast-grep scan -r fstring-in-logging-python.yml [path]
+
+id: fstring-in-logging-python
+language: python
+severity: warning
+message: >-
+  Use lazy % formatting in logging calls instead of f-strings.
+  f-strings evaluate eagerly even when the log level is disabled.
+  Use: logging.info("value: %s", val) instead.
+rule:
+  kind: call
+  all:
+    - has:
+        field: function
+        kind: attribute
+        has:
+          field: attribute
+          kind: identifier
+          regex: "^(debug|info|warning|error|critical|exception|log)$"
+    - has:
+        field: arguments
+        kind: argument_list
+        has:
+          kind: string
+          has:
+            kind: interpolation

@@ -1,0 +1,40 @@
+# Detect .unwrap() calls in Rust code
+# Bare .unwrap() can cause panics in production. Prefer .expect("reason"),
+# the ? operator, or explicit match/if-let handling.
+# Excludes test modules where .unwrap() is acceptable.
+#
+# Usage: ast-grep scan -r unwrap-in-production-rust.yml [path]
+
+id: unwrap-in-production-rust
+language: rust
+severity: warning
+message: >-
+  .unwrap() can panic at runtime. Use .expect("reason") for clarity,
+  the ? operator for propagation, or explicit error handling.
+
+rule:
+  all:
+    - pattern: $EXPR.unwrap()
+    - not:
+        inside:
+          kind: attribute_item
+          stopBy: end
+    - not:
+        inside:
+          all:
+            - kind: mod_item
+            - has:
+                kind: identifier
+                regex: "^tests?$"
+          stopBy: end
+
+# Also catch .unwrap() inside closures and nested expressions
+---
+id: unwrap-expect-empty-rust
+language: rust
+severity: warning
+message: >-
+  .expect() with an empty string is no better than .unwrap().
+  Provide a meaningful error message.
+rule:
+  pattern: $EXPR.expect("")
