@@ -53,6 +53,7 @@ import {
 } from './static-analysis.js';
 import {
   sendTelegramNotification,
+  initGlobalNotifier,
   escapeHtml,
   formatHeartbeat,
   formatCycleStart,
@@ -70,6 +71,15 @@ import {
   PROACTIVE_SCAN_INTERVAL_MS,
   traceId,
 } from './types.js';
+import {
+  initEvolutionEngine,
+  tick as evolutionTick,
+} from './evolution/engine.js';
+import { loadEvolutionState } from './evolution/state.js';
+import { seedIfEmpty, loadAllPrompts } from './evolution/prompt-registry.js';
+import { SEED_PROMPTS } from './evolution/seed-prompts.js';
+import { initFeedbackHandler } from './evolution/telegram-feedback.js';
+import { canCallMiniMax } from './evolution/rpm-tracker.js';
 
 export type { OrchestratorConfig } from './types.js';
 
@@ -120,6 +130,9 @@ export async function startOrchestratorLoop(config: {
     process.exit(1);
   }
 
+  // Initialize global notifier so all modules can send Telegram messages
+  initGlobalNotifier(botToken, chatId);
+
   const state = loadState();
   if (!state.startedAt) state.startedAt = new Date().toISOString();
 
@@ -138,6 +151,15 @@ export async function startOrchestratorLoop(config: {
   }
 
   syncFalsePositivePatterns();
+
+  // Initialize evolution engine
+  seedIfEmpty(SEED_PROMPTS);
+  loadAllPrompts();
+  const evoState = loadEvolutionState();
+  initEvolutionEngine(evoState);
+  if (botToken) {
+    initFeedbackHandler(botToken);
+  }
 
   logger.info(
     {
@@ -253,7 +275,10 @@ export async function startOrchestratorLoop(config: {
           );
         }
 
-        logger.warn({ backoff, errors: state.consecutiveErrors }, 'Backing off after git pull failure');
+        logger.warn(
+          { backoff, errors: state.consecutiveErrors },
+          'Backing off after git pull failure',
+        );
         await sleep(backoff);
         continue;
       }
@@ -309,6 +334,11 @@ export async function startOrchestratorLoop(config: {
           : 0;
         if (now - lastAlgoScan >= ALGO_SCAN_INTERVAL_MS && minimaxKey) {
           await runAlgoScanCycle(config, state, minimaxKey, botToken, chatId);
+        }
+
+        // Evolution engine gets CPU time during idle
+        if (canCallMiniMax()) {
+          await evolutionTick(state, minimaxKey, config);
         }
 
         await sleep(CYCLE_COOLDOWN_MS);
@@ -557,8 +587,9 @@ export async function startOrchestratorLoop(config: {
         'Orchestrator cycle error',
       );
 
-      // Escalating alerts: 3, 10, 50, then every 50
+      // Escalating alerts: 1st error, then 3, 10, 50, then every 50
       const shouldAlert =
+        state.consecutiveErrors === 1 ||
         state.consecutiveErrors === 3 ||
         state.consecutiveErrors === 10 ||
         state.consecutiveErrors === 50 ||
