@@ -30,11 +30,8 @@ import type {
   OrchestratorConfig,
   OrchestratorState,
 } from './types.js';
-import {
-  createAgentSession,
-  createReadOnlyTools,
-  SessionManager,
-} from '@mariozechner/pi-coding-agent';
+import { createReadOnlyTools } from '@mariozechner/pi-coding-agent';
+import { Agent } from '@mariozechner/pi-agent-core';
 import { getModel } from '@mariozechner/pi-ai';
 
 /**
@@ -202,27 +199,29 @@ export async function runAgenticSweep(
   const model = getModel('minimax', 'MiniMax-M2.5-highspeed');
   const tools = createReadOnlyTools(repoPath);
 
-  const { session } = await createAgentSession({
-    model,
-    tools,
-    cwd: repoPath,
-    thinkingLevel: 'off',
-    sessionManager: SessionManager.inMemory(),
+  // Use Pi's lightweight Agent class directly (no session/resource loading overhead)
+  const agent = new Agent({
+    getApiKey: (provider: string) => {
+      if (provider === 'minimax') return process.env.MINIMAX_API_KEY;
+      return undefined;
+    },
   });
+  agent.setModel(model);
+  agent.setTools(tools);
+  agent.setThinkingLevel('off');
 
   // Collect assistant text output to parse findings
   let finalText = '';
   let turnCount = 0;
 
-  session.subscribe((event) => {
+  agent.subscribe((event) => {
     if (event.type === 'turn_end') {
       turnCount++;
-      // Extract text from the assistant message
       const msg = event.message;
       if (msg && 'content' in msg && Array.isArray(msg.content)) {
         for (const block of msg.content) {
           if ('type' in block && block.type === 'text' && 'text' in block) {
-            finalText = block.text; // Last text block = final answer
+            finalText = block.text;
           }
         }
       }
@@ -235,7 +234,7 @@ export async function runAgenticSweep(
     }
   });
 
-  const prompt = `You are performing a ${scanType} scan on opendeviationbar-py (Rust+Python financial data library, ${allFiles.length} files).
+  const prompt = `You are performing a ${scanType} scan on a codebase at ${repoPath} (${allFiles.length} files).
 
 Use your tools to explore the codebase:
 - Use \`find\` to discover file structure
@@ -260,7 +259,7 @@ If no issues found, output: []
 JSON:`;
 
   try {
-    await session.prompt(prompt, { expandPromptTemplates: false });
+    await agent.prompt(prompt);
   } catch (err) {
     logger.warn({ err, scanType }, 'Pi agentic sweep failed');
     return { findings: [], totalFiles: allFiles.length, turns: turnCount };
