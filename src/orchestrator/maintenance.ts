@@ -168,15 +168,19 @@ export async function runClaudeMdMaintenance(
 
     logger.info({ summary, isNoChanges }, 'CLAUDE.md maintenance complete');
 
-    // Commit and push CLAUDE.md changes to remote
+    // Commit and push CLAUDE.md changes to remote.
+    // CRITICAL: If commit/push fails, REVERT changes to keep working tree clean.
+    // A dirty working tree blocks git pull --ff-only and stalls the orchestrator.
     if (!isNoChanges) {
+      const commitShort = headCommit.slice(0, 7);
+      let committed = false;
       try {
-        const commitShort = headCommit.slice(0, 7);
         // Stage only CLAUDE.md files (never stage unrelated changes)
-        execSync(
-          'git add -A -- "**/CLAUDE.md" "CLAUDE.md"',
-          { cwd: repoPath, encoding: 'utf-8', timeout: 10_000 },
-        );
+        execSync('git add -A -- "**/CLAUDE.md" "CLAUDE.md"', {
+          cwd: repoPath,
+          encoding: 'utf-8',
+          timeout: 10_000,
+        });
         const hasStagedChanges = execSync(
           'git diff --cached --quiet || echo "dirty"',
           { cwd: repoPath, encoding: 'utf-8', timeout: 5_000 },
@@ -186,14 +190,54 @@ export async function runClaudeMdMaintenance(
             `git commit -m "docs: update CLAUDE.md project memory (${commitShort})"`,
             { cwd: repoPath, encoding: 'utf-8', timeout: 15_000 },
           );
-          execSync(
-            'git push',
-            { cwd: repoPath, encoding: 'utf-8', timeout: 30_000 },
-          );
+          committed = true;
+          execSync('git push', {
+            cwd: repoPath,
+            encoding: 'utf-8',
+            timeout: 30_000,
+          });
           logger.info('CLAUDE.md changes committed and pushed');
         }
       } catch (err) {
-        logger.warn({ err }, 'Failed to commit/push CLAUDE.md changes (non-fatal)');
+        logger.warn(
+          { err },
+          'Failed to commit/push CLAUDE.md changes — reverting to keep tree clean',
+        );
+        // Revert uncommitted CLAUDE.md changes to prevent stalling git pull
+        try {
+          if (committed) {
+            // Committed but push failed — reset the commit
+            execSync('git reset --soft HEAD~1', {
+              cwd: repoPath,
+              encoding: 'utf-8',
+              timeout: 10_000,
+            });
+          }
+          // Discard all CLAUDE.md changes from working tree
+          execSync('git checkout -- "**/CLAUDE.md" "CLAUDE.md" 2>/dev/null || true', {
+            cwd: repoPath,
+            encoding: 'utf-8',
+            timeout: 10_000,
+          });
+          logger.info('CLAUDE.md changes reverted to keep working tree clean');
+        } catch (revertErr) {
+          logger.error(
+            { revertErr },
+            'Failed to revert CLAUDE.md changes — working tree may be dirty',
+          );
+        }
+        if (botToken && chatId) {
+          await sendTelegramNotification(
+            [
+              `<b>⚠️ CLAUDE.md Maintenance — Reverted</b>`,
+              ``,
+              `Commit/push failed. Changes reverted to keep tree clean.`,
+              `<code>${escapeHtml(String(err).slice(0, 200))}</code>`,
+            ].join('\n'),
+            botToken,
+            chatId,
+          );
+        }
       }
     }
 

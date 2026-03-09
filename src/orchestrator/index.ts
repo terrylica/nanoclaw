@@ -14,12 +14,18 @@ import { execSync } from 'child_process';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import {
+  gitPullWithAutoResolve,
+  getGitDiagnosticContext,
+  diagnoseErrorWithMiniMax,
+  reportAutoResolution,
+  reportErrorDiagnosis,
+} from './auto-resolve.js';
+import {
   getChangedFiles,
   getCommitLog,
   getDiff,
   getGitBranch,
   getHeadCommit,
-  gitPull,
 } from './git-ops.js';
 import {
   suggestLabels,
@@ -197,18 +203,87 @@ export async function startOrchestratorLoop(config: {
         rotateLogIfNeeded();
       }
 
-      // Step 1: git pull
-      const pulled = gitPull(config.repoPath);
-      if (!pulled) {
+      // Step 1: git pull with auto-resolution
+      const pullResult = gitPullWithAutoResolve(config.repoPath);
+
+      // Report auto-resolution actions to Telegram
+      if (pullResult.resolved && botToken && chatId) {
+        await reportAutoResolution(
+          pullResult,
+          state.consecutiveErrors,
+          botToken,
+          chatId,
+        );
+      }
+
+      if (!pullResult.pulled) {
         state.consecutiveErrors++;
+        state.lastErrorMessage = pullResult.diagnosis;
         saveState(state);
+
         const backoff = Math.min(
           CYCLE_COOLDOWN_ERROR_MS * Math.pow(2, state.consecutiveErrors - 1),
           10 * 60_000,
         );
-        logger.warn({ backoff }, 'Backing off after git pull failure');
+
+        // LLM-generated diagnosis at escalation thresholds (3, 10, 50, then every 50)
+        const shouldDiagnose =
+          state.consecutiveErrors === 3 ||
+          state.consecutiveErrors === 10 ||
+          state.consecutiveErrors === 50 ||
+          state.consecutiveErrors % 50 === 0;
+
+        if (shouldDiagnose && minimaxKey && botToken && chatId) {
+          const diagCtx = getGitDiagnosticContext(
+            config.repoPath,
+            pullResult.diagnosis,
+          );
+          const diagnosis = await diagnoseErrorWithMiniMax(
+            diagCtx,
+            state.consecutiveErrors,
+            minimaxKey,
+          );
+          state.lastDiagnosisAt = new Date().toISOString();
+          saveState(state);
+          await reportErrorDiagnosis(
+            diagnosis,
+            state.consecutiveErrors,
+            botToken,
+            chatId,
+          );
+        }
+
+        logger.warn({ backoff, errors: state.consecutiveErrors }, 'Backing off after git pull failure');
         await sleep(backoff);
         continue;
+      }
+
+      // Pull succeeded — reset error state
+      if (state.consecutiveErrors > 0) {
+        logger.info(
+          { previousErrors: state.consecutiveErrors },
+          'Git pull recovered after errors',
+        );
+        if (botToken && chatId) {
+          await sendTelegramNotification(
+            [
+              `<b>✅ NanoClaw: Recovered</b>`,
+              ``,
+              `Git pull succeeded after <code>${state.consecutiveErrors}</code> consecutive failures.`,
+              pullResult.resolved
+                ? `Auto-resolved via: <code>${pullResult.action}</code>`
+                : '',
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            botToken,
+            chatId,
+          );
+        }
+        state.consecutiveErrors = 0;
+        state.lastErrorMessage = undefined;
+        state.lastDiagnosisAt = undefined;
+        saveState(state);
       }
 
       // Step 2: Check for changes
@@ -470,6 +545,7 @@ export async function startOrchestratorLoop(config: {
       );
     } catch (err) {
       state.consecutiveErrors++;
+      state.lastErrorMessage = String(err).slice(0, 300);
       saveState(state);
 
       const backoff = Math.min(
@@ -481,7 +557,15 @@ export async function startOrchestratorLoop(config: {
         'Orchestrator cycle error',
       );
 
-      if (state.consecutiveErrors >= 3 && botToken && chatId) {
+      // Escalating alerts: 3, 10, 50, then every 50
+      const shouldAlert =
+        state.consecutiveErrors === 3 ||
+        state.consecutiveErrors === 10 ||
+        state.consecutiveErrors === 50 ||
+        state.consecutiveErrors % 50 === 0;
+
+      if (shouldAlert && botToken && chatId) {
+        // Send raw error alert
         await sendTelegramNotification(
           [
             `<b>⚠️ NanoClaw Error Alert</b>`,
@@ -493,6 +577,31 @@ export async function startOrchestratorLoop(config: {
           botToken,
           chatId,
         );
+
+        // LLM-generated diagnosis for deeper insight
+        if (minimaxKey) {
+          try {
+            const diagCtx = getGitDiagnosticContext(
+              config.repoPath,
+              String(err),
+            );
+            const diagnosis = await diagnoseErrorWithMiniMax(
+              diagCtx,
+              state.consecutiveErrors,
+              minimaxKey,
+            );
+            state.lastDiagnosisAt = new Date().toISOString();
+            saveState(state);
+            await reportErrorDiagnosis(
+              diagnosis,
+              state.consecutiveErrors,
+              botToken,
+              chatId,
+            );
+          } catch {
+            // Diagnosis failure must not block recovery
+          }
+        }
       }
 
       await sleep(backoff);

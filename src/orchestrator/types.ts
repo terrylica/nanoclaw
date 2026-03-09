@@ -69,6 +69,8 @@ export interface OrchestratorState {
   algoScanCount?: number;
   startedAt: string;
   consecutiveErrors: number;
+  lastErrorMessage?: string;
+  lastDiagnosisAt?: string;
   findingsValidated: number;
   findingsRejected: number;
 }

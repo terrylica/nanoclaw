@@ -94,8 +94,22 @@ export function formatHeartbeat(
     (Date.now() - new Date(state.startedAt).getTime()) /
     60_000
   ).toFixed(0);
-  return [
-    `<b>💚 NanoClaw Heartbeat</b>`,
+
+  // Show error state prominently — don't mask failures with green heart
+  const hasErrors = state.consecutiveErrors > 0;
+  const icon = hasErrors
+    ? state.consecutiveErrors >= 10
+      ? '🔴'
+      : state.consecutiveErrors >= 3
+        ? '🟡'
+        : '💚'
+    : '💚';
+  const title = hasErrors
+    ? `NanoClaw Heartbeat — ${state.consecutiveErrors} consecutive errors`
+    : 'NanoClaw Heartbeat';
+
+  const lines = [
+    `<b>${icon} ${title}</b>`,
     ``,
     `• Cycles: <code>${state.cycleCount}</code>`,
     `• Issues created: <code>${state.issuesCreated}</code>`,
@@ -103,9 +117,25 @@ export function formatHeartbeat(
     `• Uptime: <code>${elapsed} min</code>`,
     `• Branch: <code>${branch}</code>`,
     `• Last commit: <code>${state.lastCheckedCommit.slice(0, 7) || 'none'}</code>`,
+  ];
+
+  if (hasErrors) {
+    lines.push(
+      ``,
+      `<b>⚠️ Errors: <code>${state.consecutiveErrors}</code> consecutive failures</b>`,
+    );
+    if (state.lastErrorMessage) {
+      lines.push(
+        `<code>${escapeHtml(state.lastErrorMessage.slice(0, 150))}</code>`,
+      );
+    }
+  }
+
+  lines.push(
     ``,
     `<i>${new Date().toLocaleString('en-CA', { timeZone: 'America/Vancouver', hour12: false })}</i>`,
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 export function formatFindingNotification(
