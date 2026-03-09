@@ -202,7 +202,7 @@ async function stepSelfScan(
   const lastSelfScan = evoState.lastSelfScan
     ? new Date(evoState.lastSelfScan).getTime()
     : 0;
-  if (Date.now() - lastSelfScan < 10 * 60_000) return null;
+  if (Date.now() - lastSelfScan < 5 * 60_000) return null; // 5 minutes
 
   const action = createAction(
     'self-scan',
@@ -329,7 +329,7 @@ export async function tick(
         ? new Date(evoState.lastTick).getTime()
         : 0;
       const hoursSinceLastTick = (Date.now() - lastTick) / 3_600_000;
-      if (hoursSinceLastTick < 4) return null;
+      if (hoursSinceLastTick < 1) return null; // every hour
       return stepIssueLandscape(config, apiKey);
     },
 

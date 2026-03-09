@@ -17,11 +17,11 @@ export function traceId(): string {
 
 export const MINIMAX_MODEL = 'MiniMax-M2.5-highspeed';
 export const MINIMAX_BASE_URL = 'https://api.minimax.io/anthropic';
-export const HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-export const PROACTIVE_SCAN_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
-export const ALGO_SCAN_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
-export const CYCLE_COOLDOWN_MS = 30_000; // 30s between cycles when no changes
-export const CYCLE_COOLDOWN_ERROR_MS = 60_000; // 60s after errors
+export const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+export const PROACTIVE_SCAN_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+export const ALGO_SCAN_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+export const CYCLE_COOLDOWN_MS = 10_000; // 10s between cycles when no changes
+export const CYCLE_COOLDOWN_ERROR_MS = 30_000; // 30s after errors
 export const STATE_FILE = path.join(DATA_DIR, 'orchestrator-state.json');
 
 // Difftastic (AST-aware diffs, reduces formatting false positives)
