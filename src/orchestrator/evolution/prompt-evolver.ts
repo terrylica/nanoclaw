@@ -63,9 +63,7 @@ function loadRecentFPExamples(promptId: string, limit = 5): FPExample[] {
 // --- Evolution ---
 
 /** Evolve the worst-performing prompt */
-export async function evolveWorstPrompt(
-  apiKey: string,
-): Promise<{
+export async function evolveWorstPrompt(apiKey: string): Promise<{
   evolved: boolean;
   promptId?: string;
   oldFpRate?: number;
@@ -174,7 +172,10 @@ Do NOT include the response format section (JSON schema) — only refine the ana
 
     return variants.slice(0, NUM_CANDIDATES);
   } catch (err) {
-    logger.warn({ err, promptId: prompt.id }, 'Failed to generate prompt candidates');
+    logger.warn(
+      { err, promptId: prompt.id },
+      'Failed to generate prompt candidates',
+    );
     return [];
   }
 }

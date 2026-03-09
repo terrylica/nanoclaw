@@ -8,6 +8,27 @@ import { DATA_DIR } from '../config.js';
 import { logger } from '../logger.js';
 import type { Finding, OrchestratorState, ValidationResult } from './types.js';
 
+// --- Global Notifier Singleton ---
+// Initialized once in index.ts, importable everywhere without threading credentials.
+
+let _botToken = '';
+let _chatId = '';
+
+/** Initialize global Telegram credentials. Call once at startup. */
+export function initGlobalNotifier(botToken: string, chatId: string): void {
+  _botToken = botToken;
+  _chatId = chatId;
+}
+
+/**
+ * Send a notification using globally-stored credentials.
+ * No-op if credentials weren't initialized (graceful degradation).
+ */
+export async function notify(message: string): Promise<void> {
+  if (!_botToken || !_chatId) return;
+  await sendTelegramNotification(message, _botToken, _chatId);
+}
+
 // Telemetry: NDJSON log of all Telegram messages
 const TELEMETRY_FILE = path.join(DATA_DIR, 'telegram-telemetry.ndjson');
 
@@ -178,19 +199,14 @@ export function formatCycleStart(
   cycle: number,
 ): string {
   const fileList = changedFiles
-    .slice(0, 8)
     .map((f) => `<code>${escapeHtml(f)}</code>`)
     .join('\n');
-  const overflow =
-    changedFiles.length > 8
-      ? `\n<i>… +${changedFiles.length - 8} more</i>`
-      : '';
   return [
     `<b>🔍 NanoClaw Cycle #${cycle}</b>`,
     ``,
     `<code>${from.slice(0, 7)}</code> → <code>${to.slice(0, 7)}</code>`,
     `${changedFiles.length} file${changedFiles.length === 1 ? '' : 's'} changed:`,
-    fileList + overflow,
+    fileList,
     ``,
     `<i>Triaging with MiniMax…</i>`,
   ].join('\n');

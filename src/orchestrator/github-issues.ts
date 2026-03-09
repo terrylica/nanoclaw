@@ -9,6 +9,7 @@ import { DATA_DIR } from '../config.js';
 import { logger } from '../logger.js';
 import { extractWords, queryMiniMax } from './minimax-client.js';
 import { getTargetRepo } from './pipeline.js';
+import { escapeHtml, notify } from './telegram.js';
 import type { Finding, ValidationResult } from './types.js';
 
 // --- Label Cache ---
@@ -64,7 +65,14 @@ export function issueExistsFuzzy(title: string): boolean {
       }
     }
     return false;
-  } catch {
+  } catch (err) {
+    logger.warn(
+      { err, title },
+      'Fuzzy dedup check failed — proceeding without dedup',
+    );
+    notify(
+      `<b>⚠️ Dedup Check Failed</b>\n\nCould not query existing issues. Duplicate may be created.\n<code>${escapeHtml(String(err).slice(0, 150))}</code>`,
+    ).catch(() => {});
     return false;
   }
 }
@@ -89,6 +97,9 @@ function fetchRepoLabels(): string[] {
     return cachedRepoLabels;
   } catch (err) {
     logger.warn({ err }, 'Failed to fetch repo labels');
+    notify(
+      `<b>⚠️ Label Fetch Failed</b>\n\nUsing ${cachedRepoLabels ? 'cached' : 'default'} labels.\n<code>${escapeHtml(String(err).slice(0, 150))}</code>`,
+    ).catch(() => {});
     return cachedRepoLabels || [];
   }
 }
@@ -149,7 +160,14 @@ Return format: ["label1", "label2"]`;
     const result = [...new Set([...baseLabels, ...validLabels])];
     logger.info({ suggested: validLabels }, 'MiniMax label suggestion');
     return result.slice(0, 5);
-  } catch {
+  } catch (err) {
+    logger.warn(
+      { err, title: finding.title },
+      'MiniMax label suggestion failed, using keyword fallback',
+    );
+    notify(
+      `<b>⚠️ Label Suggestion Failed</b>\n\nFalling back to keyword matching for: <code>${escapeHtml(finding.title.slice(0, 60))}</code>`,
+    ).catch(() => {});
     const keywords = keywordMap[finding.type] || [];
     const matched = repoLabels.filter((label) =>
       keywords.some((kw) => label.toLowerCase().includes(kw)),
@@ -400,6 +418,9 @@ ${provenanceSection}
     return url;
   } catch (err) {
     logger.error({ err, title }, 'Failed to create GitHub issue');
+    notify(
+      `<b>❌ GitHub Issue Creation Failed</b>\n\n<code>${escapeHtml(title.slice(0, 80))}</code>\n<code>${escapeHtml(String(err).slice(0, 200))}</code>`,
+    ).catch(() => {});
     return null;
   }
 }

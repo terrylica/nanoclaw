@@ -6,10 +6,7 @@
  */
 import { logger } from '../../logger.js';
 import { recordResult } from './prompt-registry.js';
-import {
-  loadEvolutionState,
-  saveEvolutionState,
-} from './state.js';
+import { loadEvolutionState, saveEvolutionState } from './state.js';
 
 // --- Types ---
 
@@ -101,10 +98,7 @@ export async function sendWithKeyboard(
 }
 
 /** Answer a callback query (dismiss the loading spinner) */
-async function answerCallback(
-  callbackId: string,
-  text: string,
-): Promise<void> {
+async function answerCallback(callbackId: string, text: string): Promise<void> {
   if (!_botToken) return;
 
   try {
@@ -125,7 +119,9 @@ async function answerCallback(
 }
 
 /** Process a single callback query */
-function processCallback(query: NonNullable<TelegramUpdate['callback_query']>): void {
+function processCallback(
+  query: NonNullable<TelegramUpdate['callback_query']>,
+): void {
   const data = query.data;
   if (!data) return;
 
@@ -163,7 +159,9 @@ function processCallback(query: NonNullable<TelegramUpdate['callback_query']>): 
       break;
 
     case 'details':
-      answerCallback(query.id, 'Details requested — check next message').catch(() => {});
+      answerCallback(query.id, 'Details requested — check next message').catch(
+        () => {},
+      );
       break;
 
     default:

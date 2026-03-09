@@ -109,7 +109,10 @@ export async function researchQuery(query: string): Promise<ResearchResult> {
   // Channel 2: Claude WebSearch (best for open-ended)
   const claudeResult = claudeWebSearch(query);
   if (claudeResult) {
-    logger.info({ query: query.slice(0, 50), source: 'claude-websearch' }, 'Research query');
+    logger.info(
+      { query: query.slice(0, 50), source: 'claude-websearch' },
+      'Research query',
+    );
     return { content: claudeResult, source: 'claude-websearch' };
   }
 

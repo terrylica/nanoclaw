@@ -83,10 +83,11 @@ export function discoverRepos(): RepoCandidate[] {
 function detectLanguages(repoPath: string): string[] {
   const languages = new Set<string>();
   try {
-    const files = execSync(
-      'git ls-files --cached | head -100',
-      { cwd: repoPath, encoding: 'utf-8', timeout: 5_000 },
-    )
+    const files = execSync('git ls-files --cached | head -100', {
+      cwd: repoPath,
+      encoding: 'utf-8',
+      timeout: 5_000,
+    })
       .trim()
       .split('\n');
 

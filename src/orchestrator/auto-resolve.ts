@@ -10,7 +10,7 @@ import { execSync } from 'child_process';
 
 import { logger } from '../logger.js';
 import { queryMiniMax } from './minimax-client.js';
-import { escapeHtml, sendTelegramNotification } from './telegram.js';
+import { escapeHtml, notify, sendTelegramNotification } from './telegram.js';
 
 export interface GitDiagnosticContext {
   status: string;
@@ -127,7 +127,9 @@ export function gitPullWithAutoResolve(repoPath: string): AutoResolveResult {
 
     // Attempt 2: Stash dirty files and retry
     try {
-      run('git stash push -u -m "nanoclaw-auto-resolve: dirty tree blocking pull"');
+      run(
+        'git stash push -u -m "nanoclaw-auto-resolve: dirty tree blocking pull"',
+      );
       logger.info({ dirtyFiles }, 'Stashed dirty files for auto-resolution');
 
       try {
@@ -211,6 +213,9 @@ Be concise. Use plain text, no markdown. Max 4 lines.`;
     return response.trim().slice(0, 600);
   } catch (err) {
     logger.warn({ err }, 'MiniMax diagnosis failed');
+    await notify(
+      `<b>⚠️ MiniMax Diagnosis Failed</b>\n\n<code>${escapeHtml(String(err).slice(0, 200))}</code>\n\nFalling back to raw error output.`,
+    );
     return `Diagnosis unavailable (MiniMax error). Last error: ${context.lastError.slice(0, 200)}`;
   }
 }

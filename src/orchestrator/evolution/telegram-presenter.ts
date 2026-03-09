@@ -167,9 +167,8 @@ export function recordTemplateEngagement(
 
   tmpl.impressions++;
   if (interacted) tmpl.interactions++;
-  tmpl.engagementRate = tmpl.impressions > 0
-    ? tmpl.interactions / tmpl.impressions
-    : 0;
+  tmpl.engagementRate =
+    tmpl.impressions > 0 ? tmpl.interactions / tmpl.impressions : 0;
 
   saveTemplates(templates);
 }

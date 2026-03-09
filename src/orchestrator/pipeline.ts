@@ -10,6 +10,7 @@ import { DATA_DIR } from '../config.js';
 import { logger } from '../logger.js';
 import { readRepoFile } from './git-ops.js';
 import { parseMiniMaxFindings, queryMiniMax } from './minimax-client.js';
+import { escapeHtml, notify } from './telegram.js';
 import { CLAUDE_VALIDATION_TIMEOUT_MS } from './types.js';
 import type { Finding, ValidationResult } from './types.js';
 
@@ -36,6 +37,9 @@ export function loadFalsePositivePatterns(): string[] {
     }
   } catch {
     logger.warn('Failed to load false positive patterns');
+    notify(
+      `<b>⚠️ FP Pattern DB</b>\n\nFailed to parse false-positive patterns file. Using empty pattern list.`,
+    ).catch(() => {});
   }
   return [];
 }
@@ -63,6 +67,9 @@ export function syncFalsePositivePatterns(): void {
     }
   } catch (err) {
     logger.warn({ err }, 'Failed to sync false positive patterns');
+    notify(
+      `<b>⚠️ FP Pattern Sync Failed</b>\n\n<code>${escapeHtml(String(err).slice(0, 200))}</code>`,
+    ).catch(() => {});
   }
 }
 
@@ -138,9 +145,15 @@ When in doubt, REJECT the finding. A false positive issue wastes more time than 
     logger.warn(
       'Consensus round returned unparseable response, keeping originals',
     );
+    await notify(
+      `<b>⚠️ Consensus Round</b>\n\nUnparseable response from MiniMax. Keeping ${findings.length} original findings.`,
+    );
     return findings;
   } catch (err) {
     logger.warn({ err }, 'Consensus round failed, keeping original findings');
+    await notify(
+      `<b>⚠️ Consensus Round Failed</b>\n\n<code>${escapeHtml(String(err).slice(0, 200))}</code>\n\nKeeping ${findings.length} original findings.`,
+    );
     return findings;
   }
 }
@@ -217,9 +230,15 @@ Your bias is toward DEFENDING the code. Only let a finding survive if you genuin
     logger.warn(
       "Devil's advocate returned unparseable response, keeping originals",
     );
+    await notify(
+      `<b>⚠️ Devil's Advocate</b>\n\nUnparseable response from MiniMax. Keeping ${findings.length} original findings.`,
+    );
     return findings;
   } catch (err) {
     logger.warn({ err }, "Devil's advocate round failed, keeping findings");
+    await notify(
+      `<b>⚠️ Devil's Advocate Failed</b>\n\n<code>${escapeHtml(String(err).slice(0, 200))}</code>\n\nKeeping ${findings.length} findings.`,
+    );
     return findings;
   }
 }
@@ -355,14 +374,19 @@ RULES:
     });
 
     if (result.error || result.status !== 0) {
+      const errMsg =
+        result.error?.message || result.stderr?.slice(0, 200) || 'unknown';
       logger.error(
         {
           title: finding.title,
-          error: result.error?.message || result.stderr?.slice(0, 200),
+          error: errMsg,
           status: result.status,
         },
         'Claude validation failed',
       );
+      notify(
+        `<b>❌ Claude Validation Failed</b>\n\n<code>${escapeHtml(finding.title.slice(0, 80))}</code>\nExit: <code>${result.status}</code>\n<code>${escapeHtml(errMsg.slice(0, 150))}</code>`,
+      ).catch(() => {});
       return null;
     }
 
@@ -386,6 +410,9 @@ RULES:
         },
         'Claude validation JSON parse failed — response logged for debugging',
       );
+      notify(
+        `<b>❌ Claude JSON Parse Failed</b>\n\n<code>${escapeHtml(finding.title.slice(0, 80))}</code>\nResponse: <code>${escapeHtml(output.slice(0, 150))}</code>`,
+      ).catch(() => {});
       return null;
     }
 
@@ -401,6 +428,9 @@ RULES:
         },
         'Claude validation missing required fields (confirmed/confidence/analysis)',
       );
+      notify(
+        `<b>❌ Claude Validation Malformed</b>\n\n<code>${escapeHtml(finding.title.slice(0, 80))}</code>\nMissing required fields (confirmed/confidence/analysis).`,
+      ).catch(() => {});
       return null;
     }
 
@@ -416,6 +446,9 @@ RULES:
     return validation;
   } catch (err) {
     logger.error({ err, title: finding.title }, 'Claude validation error');
+    notify(
+      `<b>❌ Claude Validation Error</b>\n\n<code>${escapeHtml(finding.title.slice(0, 80))}</code>\n<code>${escapeHtml(String(err).slice(0, 150))}</code>`,
+    ).catch(() => {});
     return null;
   }
 }

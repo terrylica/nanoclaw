@@ -336,8 +336,8 @@ export async function startOrchestratorLoop(config: {
           await runAlgoScanCycle(config, state, minimaxKey, botToken, chatId);
         }
 
-        // Evolution engine gets CPU time during idle
-        if (canCallMiniMax()) {
+        // Evolution engine gets CPU time EVERY idle cycle (high frequency)
+        if (minimaxKey && canCallMiniMax()) {
           await evolutionTick(state, minimaxKey, config);
         }
 

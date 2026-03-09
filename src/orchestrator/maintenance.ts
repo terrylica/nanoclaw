@@ -9,7 +9,7 @@ import { DATA_DIR } from '../config.js';
 import { logger } from '../logger.js';
 import { setCcSkillsContent } from './github-issues.js';
 import { getTargetRepo } from './pipeline.js';
-import { escapeHtml, sendTelegramNotification } from './telegram.js';
+import { escapeHtml, notify, sendTelegramNotification } from './telegram.js';
 
 // --- cc-skills Sync ---
 
@@ -55,6 +55,9 @@ export function syncCcSkills(ccSkillsPath: string): void {
     );
   } catch (err) {
     logger.warn({ err }, 'cc-skills sync failed (non-fatal)');
+    notify(
+      `<b>⚠️ cc-skills Sync Failed</b>\n\n<code>${escapeHtml(String(err).slice(0, 200))}</code>`,
+    ).catch(() => {});
   }
 }
 
@@ -214,11 +217,14 @@ export async function runClaudeMdMaintenance(
             });
           }
           // Discard all CLAUDE.md changes from working tree
-          execSync('git checkout -- "**/CLAUDE.md" "CLAUDE.md" 2>/dev/null || true', {
-            cwd: repoPath,
-            encoding: 'utf-8',
-            timeout: 10_000,
-          });
+          execSync(
+            'git checkout -- "**/CLAUDE.md" "CLAUDE.md" 2>/dev/null || true',
+            {
+              cwd: repoPath,
+              encoding: 'utf-8',
+              timeout: 10_000,
+            },
+          );
           logger.info('CLAUDE.md changes reverted to keep working tree clean');
         } catch (revertErr) {
           logger.error(
@@ -283,6 +289,9 @@ ${changedFiles.map((f) => `- \`${f}\``).join('\n')}
         logger.info({ issueUrl }, 'CLAUDE.md maintenance issue created');
       } catch (err) {
         logger.warn({ err }, 'Failed to create CLAUDE.md maintenance issue');
+        await notify(
+          `<b>⚠️ CLAUDE.md Issue Creation Failed</b>\n\n<code>${escapeHtml(String(err).slice(0, 200))}</code>`,
+        );
       }
     }
 

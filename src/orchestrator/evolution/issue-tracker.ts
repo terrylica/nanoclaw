@@ -69,7 +69,11 @@ Respond with JSON: {"stillRelevant": true/false, "reason": "brief explanation", 
   }
 
   // Default: assume still relevant
-  return { stillRelevant: true, reason: 'Check failed, assuming relevant', canHelp: false };
+  return {
+    stillRelevant: true,
+    reason: 'Check failed, assuming relevant',
+    canHelp: false,
+  };
 }
 
 /** Run issue landscape check */

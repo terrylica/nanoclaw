@@ -69,7 +69,22 @@ export function parseMiniMaxFindings(raw: string): Finding[] {
 
   try {
     const parsed = JSON.parse(jsonStr);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    // Sanitize: ensure every finding has required string fields
+    return parsed
+      .filter(
+        (f: Record<string, unknown>) =>
+          f && typeof f === 'object' && typeof f.title === 'string',
+      )
+      .map((f: Record<string, unknown>) => ({
+        ...f,
+        title: (f.title as string) || 'Untitled finding',
+        description: (f.description as string) || '',
+        type: (f.type as string) || 'bug',
+        severity: (f.severity as string) || 'medium',
+        files: Array.isArray(f.files) ? f.files : [],
+        validation: (f.validation as string) || '',
+      })) as Finding[];
   } catch {
     return [];
   }

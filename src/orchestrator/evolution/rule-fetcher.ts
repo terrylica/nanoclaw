@@ -92,10 +92,7 @@ export function fetchRulesFromSource(
           fs.mkdirSync(langTarget, { recursive: true });
 
           for (const ruleFile of ruleFiles) {
-            const destFile = path.join(
-              langTarget,
-              path.basename(ruleFile),
-            );
+            const destFile = path.join(langTarget, path.basename(ruleFile));
             fs.copyFileSync(ruleFile, destFile);
             fetched++;
           }
@@ -104,9 +101,7 @@ export function fetchRulesFromSource(
         // Cleanup temp dir
         execSync(`rm -rf "${tempDir}"`, { timeout: 10_000 });
       } catch (err) {
-        errors.push(
-          `${source.name}/${lang}: ${String(err).slice(0, 100)}`,
-        );
+        errors.push(`${source.name}/${lang}: ${String(err).slice(0, 100)}`);
       }
     }
   } catch (err) {
@@ -148,10 +143,7 @@ function findYamlFiles(dir: string): string[] {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       results.push(...findYamlFiles(fullPath));
-    } else if (
-      entry.name.endsWith('.yml') ||
-      entry.name.endsWith('.yaml')
-    ) {
+    } else if (entry.name.endsWith('.yml') || entry.name.endsWith('.yaml')) {
       results.push(fullPath);
     }
   }

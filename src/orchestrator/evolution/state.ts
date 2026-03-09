@@ -55,10 +55,7 @@ export interface EvolutionState {
   /** Last Telegram update ID for callback polling */
   lastTelegramUpdateId?: number;
   /** Finding pattern activation scores: pattern -> { score, lastSeen } */
-  patternActivation: Record<
-    string,
-    { score: number; lastSeen: string }
-  >;
+  patternActivation: Record<string, { score: number; lastSeen: string }>;
 }
 
 // --- Constants ---
@@ -158,9 +155,7 @@ export function recordFailure(state: EvolutionState): {
     return { paused: true, duration: STAGNATION_PAUSE_10 };
   }
   if (state.consecutiveFailures >= 5) {
-    state.pausedUntil = new Date(
-      Date.now() + STAGNATION_PAUSE_5,
-    ).toISOString();
+    state.pausedUntil = new Date(Date.now() + STAGNATION_PAUSE_5).toISOString();
     return { paused: true, duration: STAGNATION_PAUSE_5 };
   }
 
@@ -176,10 +171,7 @@ export function recordSuccess(state: EvolutionState): void {
 // --- Memory Activation/Decay ---
 
 /** Update activation score for a finding pattern */
-export function activatePattern(
-  state: EvolutionState,
-  pattern: string,
-): void {
+export function activatePattern(state: EvolutionState, pattern: string): void {
   state.patternActivation[pattern] = {
     score: 1.0,
     lastSeen: new Date().toISOString(),

@@ -12,6 +12,7 @@ import {
   severityRank,
 } from './minimax-client.js';
 import { loadFalsePositivePatterns } from './pipeline.js';
+import { escapeHtml, notify } from './telegram.js';
 import { MAX_FINDINGS_PER_CYCLE, MIN_SEVERITY_FOR_ISSUE } from './types.js';
 import type { ExpertPerspective, Finding, TriageResult } from './types.js';
 
@@ -244,6 +245,9 @@ export async function triageChanges(
           { expert: expert.name, err, durationMs: Date.now() - t0 },
           'Expert perspective failed',
         );
+        notify(
+          `<b>⚠️ Triage Expert Failed</b>\n\nPerspective: <code>${escapeHtml(expert.name)}</code>\n<code>${escapeHtml(String(err).slice(0, 150))}</code>`,
+        ).catch(() => {});
         return { expert: expert.name, findings: [] as Finding[], raw: '' };
       }
     }),

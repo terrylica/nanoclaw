@@ -7,6 +7,7 @@ import path from 'path';
 
 import { DATA_DIR } from '../config.js';
 import { logger } from '../logger.js';
+import { notify } from './telegram.js';
 import {
   AST_GREP_BINARY,
   AST_GREP_RULES_DIR,
@@ -226,8 +227,11 @@ export function runOpenGrepOnFiles(
     } catch {
       return output.slice(0, 5_000);
     }
-  } catch {
+  } catch (err) {
     logger.info('OpenGrep scan failed (non-fatal)');
+    notify(
+      `<b>⚠️ OpenGrep SAST Failed</b>\n\nSecurity scanning unavailable this cycle.`,
+    ).catch(() => {});
     return '';
   }
 }

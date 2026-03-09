@@ -41,14 +41,11 @@ export function commitEvolution(
 
     // Create commit with evolution prefix
     const message = `evolution(${action.type}): ${action.description}`;
-    execSync(
-      `git commit -m "${message.replace(/"/g, '\\"')}"`,
-      {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        timeout: 15_000,
-      },
-    );
+    execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+      cwd: repoPath,
+      encoding: 'utf-8',
+      timeout: 15_000,
+    });
 
     // Get the commit hash
     const hash = execSync('git rev-parse HEAD', {
@@ -83,10 +80,7 @@ export function commitEvolution(
 }
 
 /** Revert an evolution commit */
-export function revertEvolution(
-  hash: string,
-  repoPath: string,
-): string | null {
+export function revertEvolution(hash: string, repoPath: string): string | null {
   try {
     execSync(`git revert --no-edit ${hash}`, {
       cwd: repoPath,

@@ -3,10 +3,7 @@
  */
 import { logger } from '../logger.js';
 import { getHeadCommit, getScannableFiles } from './git-ops.js';
-import {
-  extractWords,
-  parseMiniMaxFindings,
-} from './minimax-client.js';
+import { extractWords, parseMiniMaxFindings } from './minimax-client.js';
 import {
   loadFalsePositivePatterns,
   runConsensusRound,
