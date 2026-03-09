@@ -100,6 +100,11 @@ export async function startOrchestratorLoop(config: {
   const chatId = process.env.TELEGRAM_CHAT_ID || env.TELEGRAM_CHAT_ID || '';
   const ccSkillsPath = process.env.CC_SKILLS_PATH || env.CC_SKILLS_PATH || '';
 
+  // Expose MINIMAX_API_KEY in process.env for Pi SDK (reads env vars directly)
+  if (minimaxKey && !process.env.MINIMAX_API_KEY) {
+    process.env.MINIMAX_API_KEY = minimaxKey;
+  }
+
   // Resolve target GitHub repo
   let targetRepo =
     config.githubRepo || process.env.GITHUB_REPO || env.GITHUB_REPO || '';
