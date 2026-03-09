@@ -2,11 +2,10 @@
  * Whole-repo scanning: chunking, proactive scan functions, and scan cycle orchestration.
  */
 import { logger } from '../logger.js';
-import { getHeadCommit, getScannableFiles, readRepoFile } from './git-ops.js';
+import { getHeadCommit, getScannableFiles } from './git-ops.js';
 import {
   extractWords,
   parseMiniMaxFindings,
-  queryMiniMax,
 } from './minimax-client.js';
 import {
   loadFalsePositivePatterns,
@@ -26,8 +25,6 @@ import { saveState, checkRateLimit } from './state.js';
 import { issueExistsFuzzy } from './github-issues.js';
 import {
   ALGO_SCAN_INTERVAL_MS,
-  CHUNK_CHAR_BUDGET,
-  PER_FILE_TRUNCATE,
   PROACTIVE_SCAN_INTERVAL_MS,
   traceId,
 } from './types.js';
@@ -36,6 +33,12 @@ import type {
   OrchestratorConfig,
   OrchestratorState,
 } from './types.js';
+import {
+  createAgentSession,
+  createReadOnlyTools,
+  SessionManager,
+} from '@mariozechner/pi-coding-agent';
+import { getModel } from '@mariozechner/pi-ai';
 
 /**
  * Format remaining time until next scan as human-readable string.
@@ -175,154 +178,148 @@ If nothing warrants attention, respond with: []
 
 JSON:`;
 
-// --- Chunking ---
+// --- Pi-Powered Agentic Sweep ---
 
 /**
- * Chunk all scannable files into groups that fit within MiniMax's context budget.
+ * Agentic sweep scan using Pi's tool-calling framework.
+ *
+ * MiniMax M2.5-highspeed drives a proper Anthropic tool_use loop
+ * with read/grep/find/ls tools (via Pi's readOnlyTools).
+ * The LLM autonomously navigates the codebase and reports findings.
+ *
+ * Replaces hand-rolled REQUEST_FILES/DONE protocol with real tool calling.
  */
-export function chunkFilesForContext(
+export async function runAgenticSweep(
   repoPath: string,
-  allFiles: string[],
-): { files: string[]; sourceContext: string }[] {
-  const chunks: { files: string[]; sourceContext: string }[] = [];
-  let currentFiles: string[] = [];
-  let currentSource = '';
-  let currentLen = 0;
+  scanPrompt: string,
+  scanType: string,
+): Promise<{ findings: Finding[]; totalFiles: number; turns: number }> {
+  const allFiles = getScannableFiles(repoPath);
+  if (allFiles.length === 0) return { findings: [], totalFiles: 0, turns: 0 };
 
-  for (const f of allFiles) {
-    const content = readRepoFile(repoPath, f);
-    if (!content) continue;
+  logger.info(
+    { totalFiles: allFiles.length, scanType },
+    'Starting Pi-powered agentic sweep',
+  );
 
-    const truncated =
-      content.length > PER_FILE_TRUNCATE
-        ? content.slice(0, PER_FILE_TRUNCATE) + '\n... (truncated)'
-        : content;
-    const block = `--- ${f} (${content.length} bytes) ---\n${truncated}\n`;
+  const model = getModel('minimax', 'MiniMax-M2.5-highspeed');
+  const tools = createReadOnlyTools(repoPath);
 
-    if (
-      currentLen + block.length > CHUNK_CHAR_BUDGET &&
-      currentFiles.length > 0
-    ) {
-      chunks.push({ files: [...currentFiles], sourceContext: currentSource });
-      currentFiles = [];
-      currentSource = '';
-      currentLen = 0;
+  const { session } = await createAgentSession({
+    model,
+    tools,
+    cwd: repoPath,
+    thinkingLevel: 'off',
+    sessionManager: SessionManager.inMemory(),
+  });
+
+  // Collect assistant text output to parse findings
+  let finalText = '';
+  let turnCount = 0;
+
+  session.subscribe((event) => {
+    if (event.type === 'turn_end') {
+      turnCount++;
+      // Extract text from the assistant message
+      const msg = event.message;
+      if (msg && 'content' in msg && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if ('type' in block && block.type === 'text' && 'text' in block) {
+            finalText = block.text; // Last text block = final answer
+          }
+        }
+      }
     }
+    if (event.type === 'tool_execution_end') {
+      logger.debug(
+        { tool: event.toolName, scanType },
+        'Pi tool call completed',
+      );
+    }
+  });
 
-    currentFiles.push(f);
-    currentSource += block + '\n';
-    currentLen += block.length;
+  const prompt = `You are performing a ${scanType} scan on opendeviationbar-py (Rust+Python financial data library, ${allFiles.length} files).
+
+Use your tools to explore the codebase:
+- Use \`find\` to discover file structure
+- Use \`ls\` to list directories
+- Use \`grep\` to search for patterns across files
+- Use \`read\` to inspect specific files
+
+${scanPrompt}
+
+Start by listing the project structure, then focus on the most critical/complex source files.
+When done, output your findings as a JSON array. Each finding:
+- type: "bug" or "enhancement" or "performance-regression"
+- severity: "critical" | "high" | "medium"
+- confidence: 1-5
+- title: specific description
+- description: detailed explanation with code references
+- files: affected file paths
+- validation: command to verify
+
+If no issues found, output: []
+
+JSON:`;
+
+  try {
+    await session.prompt(prompt, { expandPromptTemplates: false });
+  } catch (err) {
+    logger.warn({ err, scanType }, 'Pi agentic sweep failed');
+    return { findings: [], totalFiles: allFiles.length, turns: turnCount };
   }
 
-  if (currentFiles.length > 0) {
-    chunks.push({ files: currentFiles, sourceContext: currentSource });
-  }
+  // Parse findings from the final assistant output
+  const findings = parseMiniMaxFindings(finalText).map((f) => ({
+    ...f,
+    sourcePerspectives: [`agentic-${scanType}`],
+  }));
 
-  return chunks;
+  logger.info(
+    { turns: turnCount, findings: findings.length, scanType },
+    'Pi agentic sweep complete',
+  );
+
+  return {
+    findings,
+    totalFiles: allFiles.length,
+    turns: turnCount,
+  };
 }
 
 // --- Scan Functions ---
 
 export async function runProactiveScan(
   repoPath: string,
-  apiKey: string,
 ): Promise<{ findings: Finding[]; totalFiles: number; chunksScanned: number }> {
-  const allFiles = getScannableFiles(repoPath);
-  if (allFiles.length === 0)
-    return { findings: [], totalFiles: 0, chunksScanned: 0 };
-
-  const chunks = chunkFilesForContext(repoPath, allFiles);
-  const allFindings: Finding[] = [];
-
-  logger.info(
-    { totalFiles: allFiles.length, chunks: chunks.length },
-    'Running whole-repo proactive enhancement scan',
+  const result = await runAgenticSweep(
+    repoPath,
+    PROACTIVE_ENHANCEMENT_PROMPT,
+    'enhancement',
   );
-
-  for (let ci = 0; ci < chunks.length; ci++) {
-    const chunk = chunks[ci];
-    const prompt = `FILES BEING SCANNED (chunk ${ci + 1}/${chunks.length}, ${chunk.files.length} files, proactive enhancement scan):
-${chunk.files.join('\n')}
-
-FULL SOURCE CODE:
-${chunk.sourceContext}
-
-${PROACTIVE_ENHANCEMENT_PROMPT}`;
-
-    try {
-      const raw = await queryMiniMax(prompt, apiKey);
-      const findings = parseMiniMaxFindings(raw);
-      allFindings.push(
-        ...findings.map((f) => ({
-          ...f,
-          type: 'enhancement' as const,
-          sourcePerspectives: ['proactive-memory-efficiency'],
-        })),
-      );
-      logger.info(
-        { chunk: ci + 1, files: chunk.files.length, findings: findings.length },
-        'Enhancement scan chunk complete',
-      );
-    } catch (err) {
-      logger.warn({ err, chunk: ci + 1 }, 'Enhancement scan chunk failed');
-    }
-  }
-
   return {
-    findings: allFindings,
-    totalFiles: allFiles.length,
-    chunksScanned: chunks.length,
+    findings: result.findings.map((f) => ({
+      ...f,
+      type: 'enhancement' as const,
+      sourcePerspectives: ['proactive-memory-efficiency'],
+    })),
+    totalFiles: result.totalFiles,
+    chunksScanned: result.turns,
   };
 }
 
 export async function runAlgoCorrectnessScan(
   repoPath: string,
-  apiKey: string,
 ): Promise<{ findings: Finding[]; totalFiles: number; chunksScanned: number }> {
-  const allFiles = getScannableFiles(repoPath);
-  if (allFiles.length === 0)
-    return { findings: [], totalFiles: 0, chunksScanned: 0 };
-
-  const chunks = chunkFilesForContext(repoPath, allFiles);
-  const allFindings: Finding[] = [];
-
-  logger.info(
-    { totalFiles: allFiles.length, chunks: chunks.length },
-    'Running whole-repo algo correctness scan',
+  const result = await runAgenticSweep(
+    repoPath,
+    PROACTIVE_ALGO_CORRECTNESS_PROMPT,
+    'algo-correctness',
   );
-
-  for (let ci = 0; ci < chunks.length; ci++) {
-    const chunk = chunks[ci];
-    const prompt = `FILES BEING SCANNED (chunk ${ci + 1}/${chunks.length}, ${chunk.files.length} files, algo correctness scan):
-${chunk.files.join('\n')}
-
-FULL SOURCE CODE:
-${chunk.sourceContext}
-
-${PROACTIVE_ALGO_CORRECTNESS_PROMPT}`;
-
-    try {
-      const raw = await queryMiniMax(prompt, apiKey);
-      const findings = parseMiniMaxFindings(raw);
-      allFindings.push(
-        ...findings.map((f) => ({
-          ...f,
-          sourcePerspectives: ['proactive-algo-correctness'],
-        })),
-      );
-      logger.info(
-        { chunk: ci + 1, files: chunk.files.length, findings: findings.length },
-        'Algo correctness scan chunk complete',
-      );
-    } catch (err) {
-      logger.warn({ err, chunk: ci + 1 }, 'Algo correctness scan chunk failed');
-    }
-  }
-
   return {
-    findings: allFindings,
-    totalFiles: allFiles.length,
-    chunksScanned: chunks.length,
+    findings: result.findings,
+    totalFiles: result.totalFiles,
+    chunksScanned: result.turns,
   };
 }
 
@@ -369,10 +366,7 @@ export async function runAlgoScanCycle(
   );
 
   try {
-    const scanResult = await runAlgoCorrectnessScan(
-      config.repoPath,
-      minimaxKey,
-    );
+    const scanResult = await runAlgoCorrectnessScan(config.repoPath);
     const rawFindings = scanResult.findings;
 
     logger.info(
@@ -715,7 +709,7 @@ export async function runProactiveScanCycle(
   );
 
   try {
-    const scanResult = await runProactiveScan(config.repoPath, minimaxKey);
+    const scanResult = await runProactiveScan(config.repoPath);
     const rawFindings = scanResult.findings;
 
     logger.info(
