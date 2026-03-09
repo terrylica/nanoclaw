@@ -15,6 +15,7 @@
  * PROTECTED: This file is never self-modifiable by the evolution engine.
  */
 import { logger } from '../../logger.js';
+import { queryMiniMax } from '../minimax-client.js';
 import type { OrchestratorConfig, OrchestratorState } from '../types.js';
 import { notify } from '../telegram.js';
 import { commitEvolution } from './git-safety.js';
@@ -51,10 +52,7 @@ async function stepIssueLandscape(
 ): Promise<EvolutionAction | null> {
   if (!config.githubRepo) return null;
 
-  const action = createAction(
-    'issue-landscape',
-    'Check open issue relevance',
-  );
+  const action = createAction('issue-landscape', 'Check open issue relevance');
 
   try {
     updateAction(action, 'executing');
@@ -106,7 +104,9 @@ async function stepPromptRefinement(
       const failResult = recordFailure(evoState);
       if (failResult.paused) {
         const duration = failResult.duration! > 3_600_000 ? '24h' : '1h';
-        await notify(formatStagnationAlert(evoState.consecutiveFailures, duration));
+        await notify(
+          formatStagnationAlert(evoState.consecutiveFailures, duration),
+        );
       }
       return null;
     }
@@ -165,10 +165,7 @@ async function stepRuleExpansion(
     }
 
     // Commit imported rules
-    const changedFiles = [
-      'rules/community/',
-      'rules/opengrep/',
-    ];
+    const changedFiles = ['rules/community/', 'rules/opengrep/'];
     const hash = commitEvolution(action, changedFiles, config.repoPath);
 
     if (hash) {
@@ -212,7 +209,7 @@ export function initEvolutionEngine(state: EvolutionState): void {
  * Runs one evolution step per tick, respecting RPM budget and stagnation.
  */
 export async function tick(
-  _orchestratorState: OrchestratorState,
+  orchestratorState: OrchestratorState,
   apiKey: string,
   config: OrchestratorConfig,
 ): Promise<void> {
@@ -275,6 +272,11 @@ export async function tick(
           await notify(formatEvolutionAction(result));
         }
 
+        // Check if we should rebuild and restart
+        if (result.status === 'committed') {
+          await checkAutonomousRestart(apiKey, orchestratorState);
+        }
+
         break; // One step per tick
       }
     } catch (err) {
@@ -282,13 +284,93 @@ export async function tick(
       const failResult = recordFailure(evoState);
       if (failResult.paused) {
         const duration = failResult.duration! > 3_600_000 ? '24h' : '1h';
-        await notify(formatStagnationAlert(evoState.consecutiveFailures, duration));
+        await notify(
+          formatStagnationAlert(evoState.consecutiveFailures, duration),
+        );
       }
       break;
     }
   }
 
   saveEvolutionState(evoState);
+}
+
+/**
+ * Check if NanoClaw should rebuild and restart itself.
+ *
+ * Called after evolution commits that modify src/ or other build-affecting files.
+ * Asks MiniMax whether the timing is safe (no active scan/triage in progress).
+ */
+async function checkAutonomousRestart(
+  apiKey: string,
+  orchestratorState: OrchestratorState,
+): Promise<void> {
+  const { execSync } = await import('child_process');
+
+  try {
+    // Check if src/ has uncommitted changes or if dist/ is stale
+    const srcHash = execSync(
+      'git log -1 --format=%H -- src/',
+      { encoding: 'utf-8', timeout: 5_000 },
+    ).trim();
+    const distMtime = execSync(
+      'stat -f %m dist/orchestrator/index.js 2>/dev/null || echo 0',
+      { encoding: 'utf-8', timeout: 5_000 },
+    ).trim();
+
+    // If dist is older than latest src commit, we need a rebuild
+    const srcCommitTime = execSync(
+      `git log -1 --format=%ct ${srcHash}`,
+      { encoding: 'utf-8', timeout: 5_000 },
+    ).trim();
+
+    if (parseInt(distMtime) >= parseInt(srcCommitTime)) {
+      return; // dist/ is up to date
+    }
+
+    // Ask MiniMax if timing is safe
+    const prompt = `NanoClaw orchestrator needs to restart to pick up code changes.
+Current state: ${orchestratorState.consecutiveErrors} errors, cycle ${orchestratorState.cycleCount}.
+Last heartbeat: ${orchestratorState.lastHeartbeat}.
+
+Is it safe to restart now? Consider:
+- Are we in the middle of a scan cycle? (no, we're in idle)
+- Will anything be lost? (state is persisted to disk)
+- Is there a better time? (idle = best time)
+
+Respond with exactly YES or NO followed by a brief reason.`;
+
+    const response = await queryMiniMax(prompt, apiKey);
+    const trimmed = response.trim();
+
+    if (!trimmed.startsWith('YES')) {
+      logger.info(
+        { reason: trimmed.slice(0, 100) },
+        'MiniMax advised against restart, deferring',
+      );
+      return;
+    }
+
+    // Rebuild
+    logger.info('Rebuilding dist/ before autonomous restart');
+    execSync('bun run build', { timeout: 30_000 });
+
+    await notify(
+      [
+        `<b>🔄 NanoClaw Self-Restart</b>`,
+        ``,
+        `Evolution engine committed code changes.`,
+        `Rebuilding and restarting to pick up new dist/.`,
+        `<i>MiniMax approved: ${trimmed.slice(4, 100)}</i>`,
+      ].join('\n'),
+    );
+
+    // Graceful restart: SIGTERM triggers launchd auto-restart
+    logger.info('Triggering graceful restart via SIGTERM');
+    process.kill(process.pid, 'SIGTERM');
+  } catch (err) {
+    logger.warn({ err }, 'Autonomous restart check failed (non-fatal)');
+  }
 }
 
 /** Get evolution engine status summary */
