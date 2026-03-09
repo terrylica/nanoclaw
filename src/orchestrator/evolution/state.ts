@@ -22,6 +22,7 @@ export type EvolutionActionType =
   | 'fp-pattern-update'
   | 'research'
   | 'issue-landscape'
+  | 'self-scan'
   | 'source-modify'
   | 'repo-onboard';
 
@@ -52,6 +53,8 @@ export interface EvolutionState {
   pausedUntil?: string;
   /** Last evolution tick timestamp */
   lastTick?: string;
+  /** Last self-scan timestamp */
+  lastSelfScan?: string;
   /** Last Telegram update ID for callback polling */
   lastTelegramUpdateId?: number;
   /** Finding pattern activation scores: pattern -> { score, lastSeen } */

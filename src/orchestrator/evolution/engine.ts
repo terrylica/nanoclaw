@@ -14,8 +14,12 @@
  *
  * PROTECTED: This file is never self-modifiable by the evolution engine.
  */
+import path from 'path';
+import { fileURLToPath } from 'url';
+
 import { logger } from '../../logger.js';
 import { queryMiniMax } from '../minimax-client.js';
+import { runAgenticSweep } from '../scanning.js';
 import type { OrchestratorConfig, OrchestratorState } from '../types.js';
 import { notify } from '../telegram.js';
 import { commitEvolution } from './git-safety.js';
@@ -190,6 +194,90 @@ async function stepRuleExpansion(
   }
 }
 
+/** Step 4: Self-Scan — Pi-powered agentic sweep of NanoClaw's own source */
+async function stepSelfScan(
+  evoState: EvolutionState,
+): Promise<EvolutionAction | null> {
+  // Self-scan every 30 minutes (not every tick)
+  const lastSelfScan = evoState.lastSelfScan
+    ? new Date(evoState.lastSelfScan).getTime()
+    : 0;
+  if (Date.now() - lastSelfScan < 30 * 60_000) return null;
+
+  const action = createAction(
+    'self-scan',
+    'Pi-powered agentic sweep of NanoClaw src/',
+  );
+
+  try {
+    updateAction(action, 'executing');
+
+    // NanoClaw's own repo root — engine.ts is at src/orchestrator/evolution/
+    const selfRepoPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../..',
+    );
+
+    const selfScanPrompt = `You are scanning NanoClaw's own TypeScript source code for improvements.
+NanoClaw is an autonomous code validation orchestrator. Focus on:
+
+1. **Dead code**: unused imports, unreachable branches, exported-but-uncalled functions
+2. **Error handling gaps**: unhandled promise rejections, missing catch blocks
+3. **Type safety**: any casts, missing type guards, unsafe assertions
+4. **Performance**: blocking operations in async loops, unnecessary allocations
+5. **Logic bugs**: race conditions, stale state, off-by-one errors
+
+Only report findings with confidence >= 4 and concrete code references.`;
+
+    const result = await runAgenticSweep(
+      selfRepoPath,
+      selfScanPrompt,
+      'self-improvement',
+    );
+
+    evoState.lastSelfScan = new Date().toISOString();
+
+    if (result.findings.length === 0) {
+      updateAction(action, 'committed', {
+        result: `Scanned ${result.totalFiles} files in ${result.turns} turns — no issues found`,
+      });
+      recordSuccess(evoState);
+      return action;
+    }
+
+    updateAction(action, 'committed', {
+      result: `Found ${result.findings.length} issue(s) in ${result.totalFiles} files (${result.turns} turns)`,
+    });
+    recordSuccess(evoState);
+
+    // Notify findings via Telegram
+    const findingsSummary = result.findings
+      .slice(0, 5)
+      .map(
+        (f) =>
+          `• <code>${f.title?.slice(0, 80) || 'untitled'}</code> [${f.severity}]`,
+      )
+      .join('\n');
+
+    await notify(
+      [
+        `<b>🔬 NanoClaw Self-Scan Complete</b>`,
+        ``,
+        `Scanned <code>${result.totalFiles}</code> files in <code>${result.turns}</code> turns`,
+        `Found <code>${result.findings.length}</code> issue(s):`,
+        findingsSummary,
+      ].join('\n'),
+    );
+
+    return action;
+  } catch (err) {
+    updateAction(action, 'failed', {
+      result: String(err).slice(0, 200),
+    });
+    return null;
+  }
+}
+
 // --- Module-level State ---
 
 let evoState: EvolutionState;
@@ -245,10 +333,13 @@ export async function tick(
       return stepIssueLandscape(config, apiKey);
     },
 
-    // Step 2: Prompt refinement
+    // Step 2: Self-scan (every 30 min — highest priority after issues)
+    async () => stepSelfScan(evoState),
+
+    // Step 3: Prompt refinement
     async () => stepPromptRefinement(config, evoState, apiKey),
 
-    // Step 3: Rule expansion (one-time)
+    // Step 4: Rule expansion (one-time)
     async () => stepRuleExpansion(config, evoState),
   ];
 

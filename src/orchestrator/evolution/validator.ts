@@ -32,6 +32,7 @@ const AUTO_APPROVED_TYPES: EvolutionActionType[] = [
   'fp-pattern-update',
   'research',
   'issue-landscape',
+  'self-scan',
 ];
 
 // --- Allowed directories for auto-approved actions ---
