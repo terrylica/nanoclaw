@@ -106,6 +106,13 @@ export function escapeHtml(s: string): string {
 export function formatHeartbeat(
   state: OrchestratorState,
   branch: string,
+  evoStats?: {
+    paused: boolean;
+    consecutiveFailures: number;
+    goalsQueued: number;
+    promptCount: number;
+    totalUses: number;
+  },
 ): string {
   const elapsed = (
     (Date.now() - new Date(state.startedAt).getTime()) /
@@ -128,13 +135,21 @@ export function formatHeartbeat(
   const lines = [
     `<b>${icon} ${title}</b>`,
     ``,
-    `• Cycles: <code>${state.cycleCount}</code>`,
-    `• Issues created: <code>${state.issuesCreated}</code>`,
-    `• Validated: <code>${state.findingsValidated}</code> | Rejected: <code>${state.findingsRejected}</code>`,
     `• Uptime: <code>${elapsed} min</code>`,
+    `• Cycles: <code>${state.cycleCount}</code>`,
     `• Branch: <code>${branch}</code>`,
     `• Last commit: <code>${state.lastCheckedCommit.slice(0, 7) || 'none'}</code>`,
   ];
+
+  if (evoStats) {
+    lines.push(
+      ``,
+      `<b>Evolution</b>`,
+      `• Prompts: <code>${evoStats.promptCount}</code> (${evoStats.totalUses} uses)`,
+      `• Goals queued: <code>${evoStats.goalsQueued}</code>`,
+      `• Evo failures: <code>${evoStats.consecutiveFailures}</code>${evoStats.paused ? ' <b>(PAUSED)</b>' : ''}`,
+    );
+  }
 
   if (hasErrors) {
     lines.push(

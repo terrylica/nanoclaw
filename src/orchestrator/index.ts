@@ -74,6 +74,7 @@ import {
 import {
   initEvolutionEngine,
   tick as evolutionTick,
+  getEvolutionStatus,
 } from './evolution/engine.js';
 import { loadEvolutionState } from './evolution/state.js';
 import { seedIfEmpty, loadAllPrompts } from './evolution/prompt-registry.js';
@@ -217,8 +218,16 @@ export async function startOrchestratorLoop(config: {
         : 0;
       if (now - lastHb >= HEARTBEAT_INTERVAL_MS && botToken && chatId) {
         const branch = getGitBranch(config.repoPath);
+        const evoStatus = getEvolutionStatus();
+        const evoStats = {
+          paused: evoStatus.paused,
+          consecutiveFailures: evoStatus.consecutiveFailures,
+          goalsQueued: evoStatus.goalsQueued,
+          promptCount: evoStatus.promptMetrics.length,
+          totalUses: evoStatus.promptMetrics.reduce((sum: number, m: { uses: number }) => sum + m.uses, 0),
+        };
         await sendTelegramNotification(
-          formatHeartbeat(state, branch),
+          formatHeartbeat(state, branch, evoStats),
           botToken,
           chatId,
         );

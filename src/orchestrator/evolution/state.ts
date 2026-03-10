@@ -24,7 +24,8 @@ export type EvolutionActionType =
   | 'issue-landscape'
   | 'self-scan'
   | 'source-modify'
-  | 'repo-onboard';
+  | 'repo-onboard'
+  | 'goal-fix';
 
 export type EvolutionActionStatus =
   | 'proposed'
@@ -46,6 +47,11 @@ export interface EvolutionAction {
   updatedAt: string;
 }
 
+export interface UserGoal {
+  text: string;
+  addedAt: string;
+}
+
 export interface EvolutionState {
   /** Count of consecutive failed evolution actions */
   consecutiveFailures: number;
@@ -57,10 +63,14 @@ export interface EvolutionState {
   lastSelfScan?: string;
   /** Last issue landscape check timestamp */
   lastIssueLandscape?: string;
+  /** Last research timestamp */
+  lastResearch?: string;
   /** Last Telegram update ID for callback polling */
   lastTelegramUpdateId?: number;
   /** Finding pattern activation scores: pattern -> { score, lastSeen } */
   patternActivation: Record<string, { score: number; lastSeen: string }>;
+  /** Queued goals for autonomous execution */
+  userGoals?: UserGoal[];
 }
 
 // --- Constants ---

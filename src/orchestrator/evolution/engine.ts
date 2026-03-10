@@ -15,6 +15,7 @@
  * PROTECTED: This file is never self-modifiable by the evolution engine.
  */
 import path from 'path';
+import { execSync, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 import { logger } from '../../logger.js';
@@ -26,11 +27,13 @@ import { commitEvolution } from './git-safety.js';
 import { checkIssueLandscape } from './issue-tracker.js';
 import { evolveWorstPrompt } from './prompt-evolver.js';
 import { loadAllPrompts, getMetrics } from './prompt-registry.js';
+import { runResearchCycle } from './research.js';
 import { canCallMiniMax } from './rpm-tracker.js';
 import { fetchAllCommunityRules, countCommunityRules } from './rule-fetcher.js';
 import {
   type EvolutionAction,
   type EvolutionState,
+  type UserGoal,
   createAction,
   updateAction,
   isEvolutionPaused,
@@ -46,6 +49,13 @@ import {
   formatPromptEvolution,
 } from './telegram-presenter.js';
 import { validateAction } from './validator.js';
+
+// --- Constants ---
+
+const CLAUDE_BIN = path.join(process.env.HOME || '/Users/terryli', '.local/bin/claude');
+const GOAL_BUDGET_USD = 2.0;
+const GOAL_TIMEOUT_MS = 300_000; // 5 min
+const SELF_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 // --- Evolution Steps ---
 
@@ -250,6 +260,16 @@ Only report findings with confidence >= 4 and concrete code references.`;
     });
     recordSuccess(evoState);
 
+    // Queue findings as goals for autonomous execution
+    for (const f of result.findings.slice(0, 5)) {
+      const goalText = [
+        f.title || 'untitled',
+        f.description ? `: ${f.description}` : '',
+        f.files?.length ? ` (files: ${f.files.join(', ')})` : '',
+      ].join('');
+      addGoal(evoState, goalText.slice(0, 500));
+    }
+
     // Notify findings via Telegram
     const findingsSummary = result.findings
       .slice(0, 5)
@@ -264,7 +284,7 @@ Only report findings with confidence >= 4 and concrete code references.`;
         `<b>🔬 NanoClaw Self-Scan Complete</b>`,
         ``,
         `Scanned <code>${result.totalFiles}</code> files in <code>${result.turns}</code> turns`,
-        `Found <code>${result.findings.length}</code> issue(s):`,
+        `Found <code>${result.findings.length}</code> issue(s) → queued as goals:`,
         findingsSummary,
       ].join('\n'),
     );
@@ -274,6 +294,233 @@ Only report findings with confidence >= 4 and concrete code references.`;
     updateAction(action, 'failed', {
       result: String(err).slice(0, 200),
     });
+    return null;
+  }
+}
+
+/** Step 5: Goal Execution — Claude Code implements queued fixes */
+async function stepGoalExecution(
+  evoState: EvolutionState,
+): Promise<EvolutionAction | null> {
+  const goals = evoState.userGoals || [];
+  if (goals.length === 0) return null;
+
+  // Take the oldest goal
+  const goal = goals[0];
+  const action = createAction('goal-fix', goal.text.slice(0, 100));
+
+  try {
+    updateAction(action, 'executing');
+
+    // CRITICAL: Stash any existing uncommitted changes before Claude Code runs.
+    // This ensures we only see the goal's changes in git status afterward.
+    let hasStash = false;
+    try {
+      const stashResult = execSync('git stash push -m "nanoclaw-goal-execution"', {
+        cwd: SELF_REPO,
+        encoding: 'utf-8',
+        timeout: 30_000,
+      }).trim();
+      hasStash = !stashResult.includes('No local changes');
+    } catch {
+      // No changes to stash — that's fine
+    }
+
+    // Run Claude Code to implement the fix
+    const prompt = [
+      `You are fixing a code issue in NanoClaw, a TypeScript/Bun project.`,
+      ``,
+      `Issue: ${goal.text}`,
+      ``,
+      `Instructions:`,
+      `- Make the minimal change needed to fix this issue`,
+      `- Do NOT modify src/orchestrator/evolution/engine.ts or src/orchestrator/evolution/validator.ts (protected files)`,
+      `- Ensure the fix compiles (TypeScript strict mode)`,
+      `- If the issue is already fixed or not applicable, make no changes`,
+    ].join('\n');
+
+    const result = spawnSync(
+      CLAUDE_BIN,
+      ['-p', '--allowedTools', 'Read,Edit,Write,Bash,Glob,Grep',
+       '--max-budget-usd', String(GOAL_BUDGET_USD), '--output-format', 'text'],
+      {
+        input: prompt,
+        cwd: SELF_REPO,
+        encoding: 'utf-8',
+        timeout: GOAL_TIMEOUT_MS,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
+
+    const output = (result.stdout || '').trim();
+    const hadError = result.error || result.status !== 0;
+
+    logger.info(
+      { goalText: goal.text.slice(0, 60), outputLen: output.length, hadError },
+      'Goal execution complete',
+    );
+
+    // Check what files were changed (only new changes since stash)
+    let changedFiles: string[] = [];
+    try {
+      const gitStatus = execSync('git status --porcelain', {
+        cwd: SELF_REPO,
+        encoding: 'utf-8',
+        timeout: 10_000,
+      }).trim();
+      changedFiles = gitStatus
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .map((line) => line.slice(3).trim())
+        .filter((f) => f.length > 0);
+    } catch {
+      // git status failed
+    }
+
+    if (changedFiles.length === 0) {
+      // No changes — goal was already fixed or not applicable
+      updateAction(action, 'committed', {
+        result: `No changes needed: ${output.slice(0, 200)}`,
+      });
+      removeGoal(evoState, 0);
+      recordSuccess(evoState);
+
+      // Restore stashed changes
+      if (hasStash) {
+        try { execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 }); } catch { /* ignore */ }
+      }
+      return action;
+    }
+
+    // Validate: build must pass
+    try {
+      execSync('bun run build', { cwd: SELF_REPO, encoding: 'utf-8', timeout: 120_000 });
+    } catch (buildErr) {
+      logger.warn({ err: buildErr, files: changedFiles }, 'Goal fix failed build — reverting');
+      // Revert only the goal's changes (not stashed changes)
+      for (const file of changedFiles) {
+        try { execSync(`git checkout -- "${file}"`, { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* ignore */ }
+      }
+      updateAction(action, 'failed', { result: 'Build failed after fix' });
+      removeGoal(evoState, 0);
+
+      if (hasStash) {
+        try { execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 }); } catch { /* ignore */ }
+      }
+      return action;
+    }
+
+    // Commit the fix
+    const hash = commitEvolution(action, changedFiles, SELF_REPO);
+
+    if (hash) {
+      updateAction(action, 'committed', {
+        commitHash: hash,
+        result: `Fixed: ${output.slice(0, 200)}`,
+      });
+      recordSuccess(evoState);
+
+      await notify(
+        [
+          `<b>🔧 Goal Fix Committed</b>`,
+          `<code>[${action.id}]</code>`,
+          ``,
+          `<i>${goal.text.slice(0, 200)}</i>`,
+          ``,
+          `Commit: <code>${hash.slice(0, 7)}</code>`,
+          `Files: ${changedFiles.map((f) => `<code>${f}</code>`).join(', ')}`,
+        ].join('\n'),
+      );
+    } else {
+      updateAction(action, 'failed', { result: 'Git commit failed' });
+      // Revert goal's changes
+      for (const file of changedFiles) {
+        try { execSync(`git checkout -- "${file}"`, { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* ignore */ }
+      }
+    }
+
+    removeGoal(evoState, 0);
+
+    // Restore stashed changes
+    if (hasStash) {
+      try { execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 }); } catch { /* ignore */ }
+    }
+
+    return action;
+  } catch (err) {
+    updateAction(action, 'failed', { result: String(err).slice(0, 200) });
+    removeGoal(evoState, 0);
+    // Try to restore stash on unexpected error
+    try { execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 }); } catch { /* ignore */ }
+    return null;
+  }
+}
+
+/** Remove a goal from the queue by index */
+function removeGoal(state: EvolutionState, index: number): void {
+  if (!state.userGoals) return;
+  state.userGoals.splice(index, 1);
+}
+
+/** Add a goal to the queue (with dedup) */
+export function addGoal(state: EvolutionState, text: string): void {
+  if (!state.userGoals) state.userGoals = [];
+  if (state.userGoals.some((g: UserGoal) => g.text === text)) return;
+  if (state.userGoals.length >= 20) return; // cap
+  state.userGoals.push({ text, addedAt: new Date().toISOString() });
+}
+
+/** Step 6: Research — MiniMax picks topics, Claude researches, MiniMax synthesizes */
+async function stepResearch(
+  evoState: EvolutionState,
+  apiKey: string,
+): Promise<EvolutionAction | null> {
+  // Research every 30 minutes
+  const lastResearch = evoState.lastResearch
+    ? new Date(evoState.lastResearch).getTime()
+    : 0;
+  if (Date.now() - lastResearch < 30 * 60_000) return null;
+
+  const action = createAction('research', 'Web research for SOTA techniques');
+
+  try {
+    updateAction(action, 'executing');
+    evoState.lastResearch = new Date().toISOString();
+
+    const result = await runResearchCycle(apiKey);
+
+    if (result.actionItems.length === 0) {
+      updateAction(action, 'committed', {
+        result: `Researched ${result.topics.length} topics, no actionable items`,
+      });
+      return action;
+    }
+
+    // Queue action items as goals
+    for (const item of result.actionItems) {
+      addGoal(evoState, item);
+    }
+
+    updateAction(action, 'committed', {
+      result: `${result.topics.length} topics → ${result.actionItems.length} action items queued`,
+    });
+    recordSuccess(evoState);
+
+    await notify(
+      [
+        `<b>🔬 Research Complete</b>`,
+        `<code>[${action.id}]</code>`,
+        ``,
+        `Topics: ${result.topics.map((t: string) => `<code>${t.slice(0, 60)}</code>`).join(', ')}`,
+        `Action items: <code>${result.actionItems.length}</code> queued as goals`,
+        ``,
+        ...result.actionItems.slice(0, 3).map((item: string) => `• <i>${item.slice(0, 100)}</i>`),
+      ].join('\n'),
+    );
+
+    return action;
+  } catch (err) {
+    updateAction(action, 'failed', { result: String(err).slice(0, 200) });
     return null;
   }
 }
@@ -320,7 +567,22 @@ export async function tick(
   // Each tick runs ONE step, then yields back to the main loop
 
   const steps = [
-    // Step 1: Issue landscape (every ~1 hour)
+    // Step 1: Self-scan (every 5 min) — discovers issues, queues as goals
+    async () => stepSelfScan(evoState),
+
+    // Step 2: Goal execution — highest priority after scan
+    async () => stepGoalExecution(evoState),
+
+    // Step 3: Research (every 30 min) — finds SOTA techniques, queues as goals
+    async () => stepResearch(evoState, apiKey),
+
+    // Step 4: Prompt refinement
+    async () => stepPromptRefinement(config, evoState, apiKey),
+
+    // Step 5: Rule expansion (one-time)
+    async () => stepRuleExpansion(config, evoState),
+
+    // Step 6: Issue landscape (every ~1 hour)
     async () => {
       const lastIssueLandscape = evoState.lastIssueLandscape
         ? new Date(evoState.lastIssueLandscape).getTime()
@@ -329,15 +591,6 @@ export async function tick(
       evoState.lastIssueLandscape = new Date().toISOString();
       return stepIssueLandscape(config, apiKey);
     },
-
-    // Step 2: Self-scan (every 5 min)
-    async () => stepSelfScan(evoState),
-
-    // Step 3: Prompt refinement
-    async () => stepPromptRefinement(config, evoState, apiKey),
-
-    // Step 4: Rule expansion (one-time)
-    async () => stepRuleExpansion(config, evoState),
   ];
 
   for (const step of steps) {
@@ -394,8 +647,6 @@ async function checkAutonomousRestart(
   apiKey: string,
   orchestratorState: OrchestratorState,
 ): Promise<void> {
-  const { execSync } = await import('child_process');
-
   try {
     // Check if src/ has uncommitted changes or if dist/ is stale
     const srcHash = execSync('git log -1 --format=%H -- src/', {
@@ -466,12 +717,14 @@ Respond with exactly YES or NO followed by a brief reason.`;
 export function getEvolutionStatus(): {
   paused: boolean;
   consecutiveFailures: number;
+  goalsQueued: number;
   promptMetrics: ReturnType<typeof getMetrics>;
   patternTemperatures: ReturnType<typeof getPatternsByTemperature>;
 } {
   return {
     paused: isEvolutionPaused(evoState),
     consecutiveFailures: evoState.consecutiveFailures,
+    goalsQueued: (evoState.userGoals || []).length,
     promptMetrics: getMetrics(),
     patternTemperatures: getPatternsByTemperature(evoState),
   };
