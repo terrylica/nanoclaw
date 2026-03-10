@@ -431,11 +431,19 @@ async function stepResearch(
   evoState: EvolutionState,
   apiKey: string,
 ): Promise<EvolutionAction | null> {
-  // Research every 10 minutes — continuous exploration
+  // Research cooldown adapts to state:
+  // - Bootstrap (first 8 cycles): 2 min — rapidly exercise all 4 strategies
+  // - Empty goal queue: 0 (immediate) — nothing to execute, so explore
+  // - Normal: 10 min
+  const cyclesDone = evoState.researchStrategyIndex || 0;
+  const goalsQueued = (evoState.userGoals || []).length;
+  const researchCooldownMs =
+    cyclesDone < 8 ? 2 * 60_000 : goalsQueued === 0 ? 0 : 10 * 60_000;
+
   const lastResearch = evoState.lastResearch
     ? new Date(evoState.lastResearch).getTime()
     : 0;
-  if (Date.now() - lastResearch < 10 * 60_000) return null;
+  if (Date.now() - lastResearch < researchCooldownMs) return null;
 
   const strategyIndex = evoState.researchStrategyIndex || 0;
   const strategies = ['exploit', 'explore', 'serendipity', 'contrarian'];

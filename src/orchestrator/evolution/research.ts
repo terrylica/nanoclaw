@@ -492,18 +492,23 @@ Return up to 5 specific, implementable action items. Each should be a single sen
     .slice(0, 5);
 
   // Step 4: Score each action item for relevance
+  // Lower threshold for novel strategies — serendipity/contrarian findings are
+  // inherently less "obviously relevant" but that's the point of diversity.
+  const threshold =
+    strategy === 'serendipity' || strategy === 'contrarian' ? 0.5 : 0.7;
+
   const actionItems: string[] = [];
   for (const item of rawItems) {
     const score = await scoreGoalRelevance(item, apiKey);
-    if (score >= 0.7) {
+    if (score >= threshold) {
       actionItems.push(item);
       logger.debug(
-        { item: item.slice(0, 60), score, strategy },
+        { item: item.slice(0, 60), score, strategy, threshold },
         'Research goal accepted',
       );
     } else {
       logger.debug(
-        { item: item.slice(0, 60), score, strategy },
+        { item: item.slice(0, 60), score, strategy, threshold },
         'Research goal rejected (low relevance)',
       );
     }
