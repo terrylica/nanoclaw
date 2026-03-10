@@ -321,6 +321,12 @@ export async function startOrchestratorLoop(config: {
       if (headCommit === state.lastCheckedCommit) {
         const now = Date.now();
 
+        // Evolution engine first — self-scan, prompt evolution, etc.
+        // Runs before proactive scans so self-scan gets its 5min cadence
+        if (minimaxKey && canCallMiniMax()) {
+          await evolutionTick(state, minimaxKey, config);
+        }
+
         const lastEnhScan = state.lastProactiveScan
           ? new Date(state.lastProactiveScan).getTime()
           : 0;
@@ -339,11 +345,6 @@ export async function startOrchestratorLoop(config: {
           : 0;
         if (now - lastAlgoScan >= ALGO_SCAN_INTERVAL_MS && minimaxKey) {
           await runAlgoScanCycle(config, state, minimaxKey, botToken, chatId);
-        }
-
-        // Evolution engine gets CPU time EVERY idle cycle (high frequency)
-        if (minimaxKey && canCallMiniMax()) {
-          await evolutionTick(state, minimaxKey, config);
         }
 
         await sleep(CYCLE_COOLDOWN_MS);
