@@ -59,11 +59,12 @@ function getSemanticDiffForFile(
     } finally {
       try {
         fs.unlinkSync(tmpOld);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        logger.debug({ err, tmpOld }, 'Failed to remove difftastic temp file');
       }
     }
-  } catch {
+  } catch (err) {
+    logger.debug({ err, filePath }, 'difftastic semantic diff failed');
     return null;
   }
 }
@@ -147,8 +148,8 @@ export function runAstGrepOnFiles(
         if (result.stdout && result.stdout.trim()) {
           allFindings.push(result.stdout.trim());
         }
-      } catch {
-        /* skip individual file errors */
+      } catch (err) {
+        logger.debug({ err, file }, 'ast-grep scan failed for file');
       }
     }
   }
@@ -224,7 +225,8 @@ export function runOpenGrepOnFiles(
         'OpenGrep SAST findings detected',
       );
       return formatted.slice(0, 10_000);
-    } catch {
+    } catch (err) {
+      logger.debug({ err }, 'OpenGrep JSON parse failed, returning raw output');
       return output.slice(0, 5_000);
     }
   } catch (err) {
