@@ -52,10 +52,16 @@ import { validateAction } from './validator.js';
 
 // --- Constants ---
 
-const CLAUDE_BIN = path.join(process.env.HOME || '/Users/terryli', '.local/bin/claude');
+const CLAUDE_BIN = path.join(
+  process.env.HOME || '/Users/terryli',
+  '.local/bin/claude',
+);
 const GOAL_BUDGET_USD = 2.0;
 const GOAL_TIMEOUT_MS = 300_000; // 5 min
-const SELF_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+const SELF_REPO = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../..',
+);
 
 // --- Evolution Steps ---
 
@@ -316,11 +322,14 @@ async function stepGoalExecution(
     // This ensures we only see the goal's changes in git status afterward.
     let hasStash = false;
     try {
-      const stashResult = execSync('git stash push -m "nanoclaw-goal-execution"', {
-        cwd: SELF_REPO,
-        encoding: 'utf-8',
-        timeout: 30_000,
-      }).trim();
+      const stashResult = execSync(
+        'git stash push -m "nanoclaw-goal-execution"',
+        {
+          cwd: SELF_REPO,
+          encoding: 'utf-8',
+          timeout: 30_000,
+        },
+      ).trim();
       hasStash = !stashResult.includes('No local changes');
     } catch {
       // No changes to stash — that's fine
@@ -341,8 +350,15 @@ async function stepGoalExecution(
 
     const result = spawnSync(
       CLAUDE_BIN,
-      ['-p', '--allowedTools', 'Read,Edit,Write,Bash,Glob,Grep',
-       '--max-budget-usd', String(GOAL_BUDGET_USD), '--output-format', 'text'],
+      [
+        '-p',
+        '--allowedTools',
+        'Read,Edit,Write,Bash,Glob,Grep',
+        '--max-budget-usd',
+        String(GOAL_BUDGET_USD),
+        '--output-format',
+        'text',
+      ],
       {
         input: prompt,
         cwd: SELF_REPO,
@@ -387,25 +403,47 @@ async function stepGoalExecution(
 
       // Restore stashed changes
       if (hasStash) {
-        try { execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 }); } catch { /* ignore */ }
+        try {
+          execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 });
+        } catch {
+          /* ignore */
+        }
       }
       return action;
     }
 
     // Validate: build must pass
     try {
-      execSync('bun run build', { cwd: SELF_REPO, encoding: 'utf-8', timeout: 120_000 });
+      execSync('bun run build', {
+        cwd: SELF_REPO,
+        encoding: 'utf-8',
+        timeout: 120_000,
+      });
     } catch (buildErr) {
-      logger.warn({ err: buildErr, files: changedFiles }, 'Goal fix failed build — reverting');
+      logger.warn(
+        { err: buildErr, files: changedFiles },
+        'Goal fix failed build — reverting',
+      );
       // Revert only the goal's changes (not stashed changes)
       for (const file of changedFiles) {
-        try { execSync(`git checkout -- "${file}"`, { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* ignore */ }
+        try {
+          execSync(`git checkout -- "${file}"`, {
+            cwd: SELF_REPO,
+            timeout: 10_000,
+          });
+        } catch {
+          /* ignore */
+        }
       }
       updateAction(action, 'failed', { result: 'Build failed after fix' });
       removeGoal(evoState, 0);
 
       if (hasStash) {
-        try { execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 }); } catch { /* ignore */ }
+        try {
+          execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 });
+        } catch {
+          /* ignore */
+        }
       }
       return action;
     }
@@ -435,7 +473,14 @@ async function stepGoalExecution(
       updateAction(action, 'failed', { result: 'Git commit failed' });
       // Revert goal's changes
       for (const file of changedFiles) {
-        try { execSync(`git checkout -- "${file}"`, { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* ignore */ }
+        try {
+          execSync(`git checkout -- "${file}"`, {
+            cwd: SELF_REPO,
+            timeout: 10_000,
+          });
+        } catch {
+          /* ignore */
+        }
       }
     }
 
@@ -443,7 +488,11 @@ async function stepGoalExecution(
 
     // Restore stashed changes
     if (hasStash) {
-      try { execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 }); } catch { /* ignore */ }
+      try {
+        execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 });
+      } catch {
+        /* ignore */
+      }
     }
 
     return action;
@@ -451,7 +500,11 @@ async function stepGoalExecution(
     updateAction(action, 'failed', { result: String(err).slice(0, 200) });
     removeGoal(evoState, 0);
     // Try to restore stash on unexpected error
-    try { execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 }); } catch { /* ignore */ }
+    try {
+      execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 });
+    } catch {
+      /* ignore */
+    }
     return null;
   }
 }
@@ -514,7 +567,9 @@ async function stepResearch(
         `Topics: ${result.topics.map((t: string) => `<code>${t.slice(0, 60)}</code>`).join(', ')}`,
         `Action items: <code>${result.actionItems.length}</code> queued as goals`,
         ``,
-        ...result.actionItems.slice(0, 3).map((item: string) => `• <i>${item.slice(0, 100)}</i>`),
+        ...result.actionItems
+          .slice(0, 3)
+          .map((item: string) => `• <i>${item.slice(0, 100)}</i>`),
       ].join('\n'),
     );
 
@@ -567,11 +622,11 @@ export async function tick(
   // Each tick runs ONE step, then yields back to the main loop
 
   const steps = [
-    // Step 1: Self-scan (every 5 min) — discovers issues, queues as goals
-    async () => stepSelfScan(evoState),
-
-    // Step 2: Goal execution — highest priority after scan
+    // Step 1: Goal execution — highest priority, implement queued fixes
     async () => stepGoalExecution(evoState),
+
+    // Step 2: Self-scan (every 5 min) — discovers issues, queues as goals
+    async () => stepSelfScan(evoState),
 
     // Step 3: Research (every 30 min) — finds SOTA techniques, queues as goals
     async () => stepResearch(evoState, apiKey),
