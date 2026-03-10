@@ -69,9 +69,14 @@ export function createWorktree(goalId: string, repoPath: string): WorktreeInfo {
   });
 
   // Symlink node_modules so bun run build/test work in the worktree
-  const mainNodeModules = path.join(repoPath, 'node_modules');
-  const worktreeNodeModules = path.join(worktreePath, 'node_modules');
-  if (fs.existsSync(mainNodeModules) && !fs.existsSync(worktreeNodeModules)) {
+  const mainNodeModules = path.resolve(repoPath, 'node_modules');
+  const worktreeNodeModules = path.resolve(worktreePath, 'node_modules');
+  if (
+    mainNodeModules !== worktreeNodeModules &&
+    fs.existsSync(mainNodeModules) &&
+    !fs.lstatSync(mainNodeModules).isSymbolicLink() &&
+    !fs.existsSync(worktreeNodeModules)
+  ) {
     fs.symlinkSync(mainNodeModules, worktreeNodeModules);
   }
 

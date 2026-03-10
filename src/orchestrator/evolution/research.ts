@@ -129,17 +129,23 @@ async function researchUrl(url: string): Promise<ResearchResult> {
  */
 export async function runResearchCycle(
   apiKey: string,
+  pastTopics: string[] = [],
 ): Promise<{ topics: string[]; actionItems: string[] }> {
   const { queryMiniMax } = await import('../minimax-client.js');
 
-  // Step 1: MiniMax picks research topics based on NanoClaw's current state
+  // Step 1: MiniMax picks research topics, avoiding past searches
+  const avoidSection =
+    pastTopics.length > 0
+      ? `\n\nDO NOT repeat these previously researched topics:\n${pastTopics.slice(-20).map((t) => `- ${t}`).join('\n')}\n\nPick something NEW and different.`
+      : '';
+
   const topicPrompt = `You are NanoClaw's research advisor. NanoClaw is a TypeScript-based autonomous code validation orchestrator that uses ast-grep rules, MiniMax for triage, and Claude Code for validation.
 
 Pick 2 research topics that would provide the highest-value improvements. Focus on:
 - Static analysis techniques (ast-grep, semgrep, tree-sitter)
 - Prompt engineering for code review (EvoPrompt, DSPy, GEPA)
 - Autonomous agent architectures (Reflexion, LATS, self-improving agents)
-- TypeScript/Bun runtime best practices
+- TypeScript/Bun runtime best practices${avoidSection}
 
 Return EXACTLY 2 lines, one topic per line. No numbering, no bullets, just the search query.`;
 

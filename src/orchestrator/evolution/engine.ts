@@ -315,8 +315,9 @@ async function stepGoalExecution(
   const { executeGoal } = await import('./goal-executor.js');
   const result = await executeGoal(goal, evoState, apiKey);
 
-  // Remove goal from queue regardless of outcome
+  // Remove goal from queue and record in completed history for dedup
   removeGoal(evoState, 0);
+  recordCompletedGoal(evoState, goal.text);
 
   return result.action;
 }
@@ -327,11 +328,63 @@ function removeGoal(state: EvolutionState, index: number): void {
   state.userGoals.splice(index, 1);
 }
 
-/** Add a goal to the queue (with dedup) */
+/** Normalize text for fuzzy comparison: lowercase, strip punctuation, collapse whitespace */
+function normalizeForDedup(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+}
+
+/** Check if two goal texts are semantically similar (fuzzy dedup) */
+function isSimilarGoal(a: string, b: string): boolean {
+  const na = normalizeForDedup(a);
+  const nb = normalizeForDedup(b);
+  if (na === nb) return true;
+  // Check if first 60 chars match (same issue, different wording)
+  if (na.slice(0, 60) === nb.slice(0, 60) && na.length > 20) return true;
+  // Check word overlap: if 70%+ words match, likely duplicate
+  const wordsA = new Set(na.split(' ').filter((w) => w.length > 3));
+  const wordsB = new Set(nb.split(' ').filter((w) => w.length > 3));
+  if (wordsA.size === 0 || wordsB.size === 0) return false;
+  const overlap = [...wordsA].filter((w) => wordsB.has(w)).length;
+  const similarity = overlap / Math.min(wordsA.size, wordsB.size);
+  return similarity >= 0.7;
+}
+
+/** Record a completed/failed goal for future dedup (ring buffer, max 100) */
+function recordCompletedGoal(state: EvolutionState, text: string): void {
+  if (!state.completedGoals) state.completedGoals = [];
+  state.completedGoals.push(normalizeForDedup(text));
+  if (state.completedGoals.length > 100) {
+    state.completedGoals = state.completedGoals.slice(-100);
+  }
+}
+
+/** Record a research topic for future dedup (ring buffer, max 50) */
+export function recordResearchTopic(state: EvolutionState, topic: string): void {
+  if (!state.pastResearchTopics) state.pastResearchTopics = [];
+  state.pastResearchTopics.push(normalizeForDedup(topic));
+  if (state.pastResearchTopics.length > 50) {
+    state.pastResearchTopics = state.pastResearchTopics.slice(-50);
+  }
+}
+
+/** Add a goal to the queue (with fuzzy dedup against queue + completed history) */
 export function addGoal(state: EvolutionState, text: string): void {
   if (!state.userGoals) state.userGoals = [];
-  if (state.userGoals.some((g: UserGoal) => g.text === text)) return;
   if (state.userGoals.length >= 20) return; // cap
+
+  // Check against current queue
+  if (state.userGoals.some((g: UserGoal) => isSimilarGoal(g.text, text)))
+    return;
+
+  // Check against completed/failed history
+  const normalized = normalizeForDedup(text);
+  if (state.completedGoals?.some((c) => isSimilarGoal(c, normalized))) return;
+
   state.userGoals.push({ text, addedAt: new Date().toISOString() });
 }
 
@@ -352,7 +405,13 @@ async function stepResearch(
     updateAction(action, 'executing');
     evoState.lastResearch = new Date().toISOString();
 
-    const result = await runResearchCycle(apiKey);
+    const pastTopics = evoState.pastResearchTopics || [];
+    const result = await runResearchCycle(apiKey, pastTopics);
+
+    // Record topics for future dedup
+    for (const topic of result.topics) {
+      recordResearchTopic(evoState, topic);
+    }
 
     if (result.actionItems.length === 0) {
       updateAction(action, 'committed', {

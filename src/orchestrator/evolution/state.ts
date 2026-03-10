@@ -73,6 +73,10 @@ export interface EvolutionState {
   lastRepoHygiene?: string;
   /** Queued goals for autonomous execution */
   userGoals?: UserGoal[];
+  /** Completed/failed goal texts for dedup (ring buffer, max 100) */
+  completedGoals?: string[];
+  /** Past research topics for dedup (ring buffer, max 50) */
+  pastResearchTopics?: string[];
 }
 
 // --- Constants ---
