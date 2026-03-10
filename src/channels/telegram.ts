@@ -39,7 +39,7 @@ export class TelegramChannel implements Channel {
       const chatName =
         chatType === 'private'
           ? ctx.from?.first_name || 'Private'
-          : (ctx.chat as any).title || 'Unknown';
+          : ('title' in ctx.chat ? ctx.chat.title : undefined) || 'Unknown';
 
       ctx.reply(
         `Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
@@ -71,7 +71,7 @@ export class TelegramChannel implements Channel {
       const chatName =
         ctx.chat.type === 'private'
           ? senderName
-          : (ctx.chat as any).title || chatJid;
+          : ('title' in ctx.chat ? ctx.chat.title : undefined) || chatJid;
 
       // Translate Telegram @bot_username mentions into TRIGGER_PATTERN format.
       // Telegram @mentions (e.g., @andy_ai_bot) won't match TRIGGER_PATTERN
