@@ -43,7 +43,7 @@ export function getGitBranch(repoPath: string): string {
 export function getDiff(repoPath: string, sinceCommit: string): string {
   try {
     return execSync(
-      `git diff ${sinceCommit}..HEAD --stat --unified=5 -- '*.rs' '*.py' '*.toml' '*.cfg'`,
+      `git diff ${sinceCommit}..HEAD --stat --unified=5 -- '*.ts' '*.json' '*.yaml' '*.yml'`,
       { cwd: repoPath, encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 },
     );
   } catch (err) {
@@ -58,7 +58,7 @@ export function getChangedFiles(
 ): string[] {
   try {
     const output = execSync(
-      `git diff ${sinceCommit}..HEAD --name-only -- '*.rs' '*.py' '*.toml' '*.cfg'`,
+      `git diff ${sinceCommit}..HEAD --name-only -- '*.ts' '*.json' '*.yaml' '*.yml'`,
       { cwd: repoPath, encoding: 'utf-8' },
     );
     return output
@@ -101,7 +101,7 @@ export function readRepoFile(repoPath: string, filePath: string): string {
 export function getScannableFiles(repoPath: string): string[] {
   try {
     const output = execSync(
-      `find . -name '*.rs' -o -name '*.py' | grep -v target/ | grep -v __pycache__ | grep -v .git/`,
+      `find . -name '*.ts' -not -name '*.test.ts' -not -name '*.d.ts' | grep -v node_modules/ | grep -v dist/ | grep -v .git/`,
       { cwd: repoPath, encoding: 'utf-8', maxBuffer: 1024 * 1024 },
     );
     const files = output.trim().split('\n').filter(Boolean);

@@ -781,7 +781,10 @@ Respond with exactly YES or NO followed by a brief reason.`;
 
     // Rebuild
     logger.info('Rebuilding dist/ before autonomous restart');
-    execSync('bun run build', { timeout: 120_000 });
+    execSync('./node_modules/.bin/tsc', {
+      timeout: 120_000,
+      env: { ...process.env, MISE_NO_CONFIG: '1' },
+    });
 
     await notify(
       [

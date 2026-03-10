@@ -120,6 +120,7 @@ export async function executeGoal(
       `  - src/orchestrator/evolution/engine.ts`,
       `  - src/orchestrator/evolution/validator.ts`,
       `  - src/orchestrator/evolution/state.ts`,
+      `- Do NOT run bun install or modify node_modules/package.json/bun.lock`,
       `- Ensure the fix compiles (TypeScript strict mode)`,
       `- If the issue is already fixed or not applicable, make no changes`,
     ].join('\n');

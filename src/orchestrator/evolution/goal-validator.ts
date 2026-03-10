@@ -10,9 +10,17 @@
  * Each gate is independent, returns typed result with timing for observability.
  */
 import { execSync } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { logger } from '../../logger.js';
 import { queryMiniMax } from '../minimax-client.js';
+
+// Main repo root — used for absolute paths to tsc and bun
+const MAIN_REPO = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../..',
+);
 
 // --- Types ---
 
@@ -44,14 +52,31 @@ const PROTECTED_FILES = [
   'src/orchestrator/evolution/state.ts',
 ];
 
+// Files that should never appear in worktree changes — always reject
+const FORBIDDEN_PATTERNS = ['node_modules', 'bun.lock', 'package.json', '.env'];
+
 // --- Individual Gates ---
 
 /** Gate 1: Check that no protected files were modified. */
 export function runProtectedFileGate(changedFiles: string[]): GateResult {
   const start = Date.now();
 
+  // Filter out forbidden files (node_modules, bun.lock, etc.) from the changeset
+  const cleanFiles: string[] = [];
   for (const file of changedFiles) {
     const normalized = file.replace(/^\.\//, '');
+
+    // Hard reject forbidden patterns
+    if (FORBIDDEN_PATTERNS.some((fp) => normalized.startsWith(fp))) {
+      return {
+        gate: 'protected-files',
+        passed: false,
+        detail: `Forbidden file modified: ${file}`,
+        durationMs: Date.now() - start,
+      };
+    }
+
+    // Hard reject protected source files
     if (
       PROTECTED_FILES.some((pf) => normalized.endsWith(pf) || normalized === pf)
     ) {
@@ -62,6 +87,7 @@ export function runProtectedFileGate(changedFiles: string[]): GateResult {
         durationMs: Date.now() - start,
       };
     }
+    cleanFiles.push(normalized);
   }
 
   return {
@@ -76,7 +102,8 @@ export function runProtectedFileGate(changedFiles: string[]): GateResult {
 export function runBuildGate(cwd: string): GateResult {
   const start = Date.now();
   try {
-    execSync('./node_modules/.bin/tsc --noEmit', {
+    const tscBin = path.join(MAIN_REPO, 'node_modules/.bin/tsc');
+    execSync(`${tscBin} --noEmit`, {
       cwd,
       encoding: 'utf-8',
       timeout: 120_000,

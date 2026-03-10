@@ -68,17 +68,8 @@ export function createWorktree(goalId: string, repoPath: string): WorktreeInfo {
     timeout: 60_000,
   });
 
-  // Symlink node_modules so bun run build/test work in the worktree
-  const mainNodeModules = path.resolve(repoPath, 'node_modules');
-  const worktreeNodeModules = path.resolve(worktreePath, 'node_modules');
-  if (
-    mainNodeModules !== worktreeNodeModules &&
-    fs.existsSync(mainNodeModules) &&
-    !fs.lstatSync(mainNodeModules).isSymbolicLink() &&
-    !fs.existsSync(worktreeNodeModules)
-  ) {
-    fs.symlinkSync(mainNodeModules, worktreeNodeModules);
-  }
+  // No node_modules symlink — validation gates use absolute paths to main repo's tsc.
+  // Symlinking caused self-referential corruption when Claude Code ran bun install.
 
   logger.info({ goalId, worktreePath, branch }, 'Created goal worktree');
 
