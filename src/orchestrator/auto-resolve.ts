@@ -78,7 +78,7 @@ export function gitPullWithAutoResolve(repoPath: string): AutoResolveResult {
     execSync(cmd, {
       cwd: repoPath,
       encoding: 'utf-8',
-      timeout: 30_000,
+      timeout: 60_000,
     }).trim();
 
   // Attempt 1: Normal pull
@@ -92,8 +92,11 @@ export function gitPullWithAutoResolve(repoPath: string): AutoResolveResult {
       dirtyFiles: [],
     };
   } catch (err) {
-    const errorMsg = String(err);
-    logger.warn('git pull --ff-only failed, attempting auto-resolution');
+    const errorMsg = String(err).slice(0, 500);
+    logger.warn(
+      { error: errorMsg.slice(0, 200) },
+      'git pull --ff-only failed, attempting auto-resolution',
+    );
 
     // Check working tree state
     let status: string;
