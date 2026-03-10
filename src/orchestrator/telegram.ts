@@ -65,38 +65,51 @@ export async function sendTelegramNotification(
   botToken: string,
   chatId: string,
 ): Promise<void> {
+  const maxRetries = 3;
   const t0 = Date.now();
-  try {
-    const response = await fetchWithTimeout(
-      `https://api.telegram.org/bot${botToken}/sendMessage`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: message,
-          parse_mode: 'HTML',
-          disable_notification: true,
-          link_preview_options: { is_disabled: true },
-        }),
-      },
-      30_000,
-    );
-    const durationMs = Date.now() - t0;
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      logger.warn(
-        { status: response.status, body: body.slice(0, 200) },
-        'Telegram API error',
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetchWithTimeout(
+        `https://api.telegram.org/bot${botToken}/sendMessage`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: message,
+            parse_mode: 'HTML',
+            disable_notification: true,
+            link_preview_options: { is_disabled: true },
+          }),
+        },
+        30_000,
       );
-      logTelemetry(message, false, durationMs);
-    } else {
-      logTelemetry(message, true, durationMs);
+      const durationMs = Date.now() - t0;
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        logger.warn(
+          { status: response.status, body: body.slice(0, 200) },
+          'Telegram API error',
+        );
+        logTelemetry(message, false, durationMs);
+      } else {
+        logTelemetry(message, true, durationMs);
+      }
+      return; // success or API error — don't retry API errors
+    } catch (err) {
+      if (attempt < maxRetries - 1) {
+        // Transient network error — wait 2s/4s then retry
+        await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+        continue;
+      }
+      logTelemetry(message, false, Date.now() - t0);
+      logger.warn(
+        { err, attempts: maxRetries },
+        'Telegram notification failed after retries (non-fatal)',
+      );
     }
-  } catch (err) {
-    logTelemetry(message, false, Date.now() - t0);
-    logger.warn({ err }, 'Telegram notification failed (non-fatal)');
   }
 }
 

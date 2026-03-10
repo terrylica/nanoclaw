@@ -325,7 +325,8 @@ export async function startOrchestratorLoop(config: {
           await evolutionTick(state, minimaxKey, config);
         }
 
-        await sleep(CYCLE_COOLDOWN_MS);
+        // Minimal yield — evolution steps have their own cooldowns, no hardcoded wait needed
+        await sleep(100);
         continue;
       }
 
@@ -623,7 +624,8 @@ export async function startOrchestratorLoop(config: {
       continue;
     }
 
-    await sleep(CYCLE_COOLDOWN_MS);
+    // Minimal yield between cycles — real work has its own pacing
+    await sleep(100);
   }
 }
 
