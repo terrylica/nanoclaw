@@ -193,9 +193,9 @@ export class TelegramChannel implements Channel {
             { username: botInfo.username, id: botInfo.id },
             'Telegram bot connected',
           );
-          console.log(`\n  Telegram bot: @${botInfo.username}`);
-          console.log(
-            `  Send /chatid to the bot to get a chat's registration ID\n`,
+          logger.info(
+            { hint: `Send /chatid to the bot to get a chat's registration ID` },
+            `Telegram bot: @${botInfo.username}`,
           );
           resolve();
         },
