@@ -278,7 +278,11 @@ export class GroupQueue {
     );
     setTimeout(() => {
       if (!this.shuttingDown) {
-        this.enqueueMessageCheck(groupJid);
+        try {
+          this.enqueueMessageCheck(groupJid);
+        } catch (err) {
+          logger.error({ groupJid, err }, 'Error in retry callback');
+        }
       }
     }, delayMs);
   }
