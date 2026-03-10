@@ -180,7 +180,6 @@ Return format: ["label1", "label2"]`;
 
 function searchRelatedIssues(
   title: string,
-  _files: string[],
 ): Array<{ number: number; title: string; url: string }> {
   const targetRepo = getTargetRepo();
   try {
@@ -351,7 +350,7 @@ export function createGitHubIssue(
     : 'consensus';
   const perspectiveCount = finding.sourcePerspectives?.length || 0;
 
-  const related = searchRelatedIssues(finding.title, finding.files);
+  const related = searchRelatedIssues(finding.title);
   const relatedSection =
     related.length > 0
       ? `\n### Related Issues\n\n${related.map((r) => `- #${r.number} — ${r.title}`).join('\n')}\n`
