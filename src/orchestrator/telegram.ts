@@ -54,8 +54,9 @@ function logTelemetry(
     });
     fs.mkdirSync(path.dirname(TELEMETRY_FILE), { recursive: true });
     fs.appendFileSync(TELEMETRY_FILE, entry + '\n');
-  } catch {
+  } catch (err) {
     // Telemetry failure must never block the pipeline
+    logger.debug({ err }, 'Telegram telemetry write failed (non-fatal)');
   }
 }
 
