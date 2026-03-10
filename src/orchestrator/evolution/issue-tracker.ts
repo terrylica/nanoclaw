@@ -27,7 +27,7 @@ export function fetchOpenIssues(githubRepo: string): GitHubIssue[] {
   try {
     const result = execSync(
       `gh issue list --repo ${githubRepo} --state open --json number,title,body,labels,createdAt --limit 30`,
-      { encoding: 'utf-8', timeout: 15_000 },
+      { encoding: 'utf-8', timeout: 60_000 },
     );
     return JSON.parse(result);
   } catch (err) {
@@ -103,7 +103,7 @@ export async function checkIssueLandscape(
       try {
         execSync(
           `gh issue comment ${issue.number} --repo ${githubRepo} --body "NanoClaw analysis suggests this issue may have been addressed: ${result.reason.replace(/"/g, '\\"')}"`,
-          { encoding: 'utf-8', timeout: 10_000 },
+          { encoding: 'utf-8', timeout: 60_000 },
         );
       } catch {
         // Non-fatal

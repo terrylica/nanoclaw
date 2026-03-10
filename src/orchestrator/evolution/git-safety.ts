@@ -23,7 +23,7 @@ export function commitEvolution(
       execSync(`git add "${file}"`, {
         cwd: repoPath,
         encoding: 'utf-8',
-        timeout: 10_000,
+        timeout: 30_000,
       });
     }
 
@@ -44,14 +44,14 @@ export function commitEvolution(
     execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
       cwd: repoPath,
       encoding: 'utf-8',
-      timeout: 15_000,
+      timeout: 30_000,
     });
 
     // Get the commit hash
     const hash = execSync('git rev-parse HEAD', {
       cwd: repoPath,
       encoding: 'utf-8',
-      timeout: 5_000,
+      timeout: 30_000,
     }).trim();
 
     logger.info(
@@ -70,7 +70,7 @@ export function commitEvolution(
       execSync('git reset HEAD', {
         cwd: repoPath,
         encoding: 'utf-8',
-        timeout: 5_000,
+        timeout: 30_000,
       });
     } catch {
       // ignore reset failure
@@ -85,13 +85,13 @@ export function revertEvolution(hash: string, repoPath: string): string | null {
     execSync(`git revert --no-edit ${hash}`, {
       cwd: repoPath,
       encoding: 'utf-8',
-      timeout: 15_000,
+      timeout: 30_000,
     });
 
     const revertHash = execSync('git rev-parse HEAD', {
       cwd: repoPath,
       encoding: 'utf-8',
-      timeout: 5_000,
+      timeout: 30_000,
     }).trim();
 
     logger.info(
@@ -107,7 +107,7 @@ export function revertEvolution(hash: string, repoPath: string): string | null {
       execSync('git revert --abort', {
         cwd: repoPath,
         encoding: 'utf-8',
-        timeout: 5_000,
+        timeout: 30_000,
       });
     } catch {
       // ignore
@@ -123,7 +123,7 @@ export function canRevert(hash: string, repoPath: string): boolean {
     execSync(`git cat-file -t ${hash}`, {
       cwd: repoPath,
       encoding: 'utf-8',
-      timeout: 5_000,
+      timeout: 30_000,
     });
     return true;
   } catch {

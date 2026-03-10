@@ -30,7 +30,7 @@ function getSemanticDiffForFile(
     const oldContent = execSync(`git show ${sinceCommit}:${filePath}`, {
       cwd: repoPath,
       encoding: 'utf-8',
-      timeout: 5_000,
+      timeout: 30_000,
     });
 
     const newPath = path.join(repoPath, filePath);
@@ -50,7 +50,7 @@ function getSemanticDiffForFile(
           tmpOld,
           newPath,
         ],
-        { encoding: 'utf-8', timeout: 15_000, maxBuffer: 2 * 1024 * 1024 },
+        { encoding: 'utf-8', timeout: 30_000, maxBuffer: 2 * 1024 * 1024 },
       );
       if (result.status !== null && result.status <= 1 && result.stdout) {
         return `--- ${filePath} (semantic diff) ---\n${result.stdout.slice(0, 8_000)}`;
@@ -142,7 +142,7 @@ export function runAstGrepOnFiles(
         const result = spawnSync(
           AST_GREP_BINARY,
           ['scan', '-r', rulePath, fullPath],
-          { encoding: 'utf-8', timeout: 10_000, maxBuffer: 512 * 1024 },
+          { encoding: 'utf-8', timeout: 30_000, maxBuffer: 512 * 1024 },
         );
         if (result.stdout && result.stdout.trim()) {
           allFindings.push(result.stdout.trim());

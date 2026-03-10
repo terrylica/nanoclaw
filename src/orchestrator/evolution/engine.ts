@@ -402,7 +402,7 @@ async function checkAutonomousRestart(
     // Check if src/ has uncommitted changes or if dist/ is stale
     const srcHash = execSync('git log -1 --format=%H -- src/', {
       encoding: 'utf-8',
-      timeout: 5_000,
+      timeout: 30_000,
     }).trim();
     const distMtime = execSync(
       'stat -f %m dist/orchestrator/index.js 2>/dev/null || echo 0',
@@ -412,7 +412,7 @@ async function checkAutonomousRestart(
     // If dist is older than latest src commit, we need a rebuild
     const srcCommitTime = execSync(`git log -1 --format=%ct ${srcHash}`, {
       encoding: 'utf-8',
-      timeout: 5_000,
+      timeout: 30_000,
     }).trim();
 
     if (parseInt(distMtime) >= parseInt(srcCommitTime)) {
@@ -444,7 +444,7 @@ Respond with exactly YES or NO followed by a brief reason.`;
 
     // Rebuild
     logger.info('Rebuilding dist/ before autonomous restart');
-    execSync('bun run build', { timeout: 30_000 });
+    execSync('bun run build', { timeout: 120_000 });
 
     await notify(
       [

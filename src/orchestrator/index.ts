@@ -113,7 +113,7 @@ export async function startOrchestratorLoop(config: {
       const remote = execSync('git remote get-url origin', {
         cwd: config.repoPath,
         encoding: 'utf-8',
-        timeout: 5_000,
+        timeout: 30_000,
       }).trim();
       const match = remote.match(/[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?$/);
       if (match) targetRepo = `${match[1]}/${match[2]}`;

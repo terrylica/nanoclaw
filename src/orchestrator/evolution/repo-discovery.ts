@@ -47,14 +47,14 @@ export function discoverRepos(): RepoCandidate[] {
       // Get last commit date
       const lastCommitDate = execSync(
         'git log -1 --format=%ci 2>/dev/null || echo "unknown"',
-        { cwd: repoPath, encoding: 'utf-8', timeout: 5_000 },
+        { cwd: repoPath, encoding: 'utf-8', timeout: 30_000 },
       ).trim();
 
       // Get commit count in last 30 days
       const commitCount = parseInt(
         execSync(
           'git rev-list --count --since="30 days ago" HEAD 2>/dev/null || echo 0',
-          { cwd: repoPath, encoding: 'utf-8', timeout: 5_000 },
+          { cwd: repoPath, encoding: 'utf-8', timeout: 30_000 },
         ).trim(),
         10,
       );
@@ -86,7 +86,7 @@ function detectLanguages(repoPath: string): string[] {
     const files = execSync('git ls-files --cached | head -100', {
       cwd: repoPath,
       encoding: 'utf-8',
-      timeout: 5_000,
+      timeout: 30_000,
     })
       .trim()
       .split('\n');

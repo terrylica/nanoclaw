@@ -38,7 +38,7 @@ export function issueExistsFuzzy(title: string): boolean {
   try {
     const result = execSync(
       `gh issue list --repo ${targetRepo} --label nanoclaw --state all --limit 100 --json title`,
-      { encoding: 'utf-8', timeout: 10_000 },
+      { encoding: 'utf-8', timeout: 60_000 },
     );
     const issues = JSON.parse(result) as Array<{ title: string }>;
 
@@ -88,7 +88,7 @@ function fetchRepoLabels(): string[] {
   try {
     const result = execSync(
       `gh label list --repo ${targetRepo} --json name --limit 100`,
-      { encoding: 'utf-8', timeout: 10_000 },
+      { encoding: 'utf-8', timeout: 60_000 },
     );
     const labels = JSON.parse(result) as Array<{ name: string }>;
     cachedRepoLabels = labels.map((l) => l.name);
@@ -187,7 +187,7 @@ function searchRelatedIssues(
     const searchTerms = extractWords(title).slice(0, 3).join(' ');
     const result = execSync(
       `gh issue list --repo ${targetRepo} --search "${searchTerms.replace(/"/g, '\\"')}" --state all --limit 5 --json number,title,url`,
-      { encoding: 'utf-8', timeout: 10_000 },
+      { encoding: 'utf-8', timeout: 60_000 },
     );
     const issues = JSON.parse(result) as Array<{
       number: number;
@@ -396,7 +396,7 @@ ${provenanceSection}
     const labelStr = labels.join(',');
     const result = execSync(
       `gh issue create --repo ${targetRepo} --title "${title.replace(/"/g, '\\"')}" --label "${labelStr}" --body-file "${tmpFile}"`,
-      { cwd: repoPath, encoding: 'utf-8', timeout: 15_000 },
+      { cwd: repoPath, encoding: 'utf-8', timeout: 60_000 },
     );
 
     try {

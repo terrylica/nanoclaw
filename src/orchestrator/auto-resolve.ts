@@ -39,7 +39,7 @@ export function getGitDiagnosticContext(
       return execSync(cmd, {
         cwd: repoPath,
         encoding: 'utf-8',
-        timeout: 10_000,
+        timeout: 30_000,
       }).trim();
     } catch {
       return '(command failed)';

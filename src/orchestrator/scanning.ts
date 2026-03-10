@@ -30,9 +30,8 @@ import type {
   OrchestratorConfig,
   OrchestratorState,
 } from './types.js';
-import { createReadOnlyTools } from '@mariozechner/pi-coding-agent';
-import { Agent } from '@mariozechner/pi-agent-core';
-import { getModel } from '@mariozechner/pi-ai';
+// Pi SDK imports are lazy-loaded in runAgenticSweep() to avoid
+// blocking module loading (the Pi packages take ~5 min to load under launchd)
 
 /**
  * Format remaining time until next scan as human-readable string.
@@ -195,6 +194,11 @@ export async function runAgenticSweep(
     { totalFiles: allFiles.length, scanType },
     'Starting Pi-powered agentic sweep',
   );
+
+  // Lazy-load Pi SDK (heavy packages that block module loading for minutes under launchd)
+  const { getModel } = await import('@mariozechner/pi-ai');
+  const { createReadOnlyTools } = await import('@mariozechner/pi-coding-agent');
+  const { Agent } = await import('@mariozechner/pi-agent-core');
 
   const model = getModel('minimax', 'MiniMax-M2.5-highspeed');
   const tools = createReadOnlyTools(repoPath);

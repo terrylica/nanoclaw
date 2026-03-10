@@ -11,7 +11,7 @@ export function gitPull(repoPath: string): boolean {
   try {
     execSync('git pull --ff-only origin main 2>&1', {
       cwd: repoPath,
-      timeout: 30_000,
+      timeout: 120_000,
       encoding: 'utf-8',
     });
     return true;

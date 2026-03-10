@@ -137,7 +137,7 @@ export async function validateAction(
       execSync('bun run build', {
         cwd: repoPath,
         encoding: 'utf-8',
-        timeout: 30_000,
+        timeout: 120_000,
       });
     } catch (err) {
       return {

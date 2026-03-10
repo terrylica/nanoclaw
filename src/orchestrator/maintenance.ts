@@ -18,7 +18,7 @@ export function syncCcSkills(ccSkillsPath: string): void {
   try {
     execSync('git pull --ff-only origin main 2>&1', {
       cwd: ccSkillsPath,
-      timeout: 15_000,
+      timeout: 60_000,
       encoding: 'utf-8',
     });
 
@@ -182,22 +182,22 @@ export async function runClaudeMdMaintenance(
         execSync('git add -A -- "**/CLAUDE.md" "CLAUDE.md"', {
           cwd: repoPath,
           encoding: 'utf-8',
-          timeout: 10_000,
+          timeout: 30_000,
         });
         const hasStagedChanges = execSync(
           'git diff --cached --quiet || echo "dirty"',
-          { cwd: repoPath, encoding: 'utf-8', timeout: 5_000 },
+          { cwd: repoPath, encoding: 'utf-8', timeout: 30_000 },
         ).trim();
         if (hasStagedChanges === 'dirty') {
           execSync(
             `git commit -m "docs: update CLAUDE.md project memory (${commitShort})"`,
-            { cwd: repoPath, encoding: 'utf-8', timeout: 15_000 },
+            { cwd: repoPath, encoding: 'utf-8', timeout: 30_000 },
           );
           committed = true;
           execSync('git push', {
             cwd: repoPath,
             encoding: 'utf-8',
-            timeout: 30_000,
+            timeout: 120_000,
           });
           logger.info('CLAUDE.md changes committed and pushed');
         }
@@ -213,7 +213,7 @@ export async function runClaudeMdMaintenance(
             execSync('git reset --soft HEAD~1', {
               cwd: repoPath,
               encoding: 'utf-8',
-              timeout: 10_000,
+              timeout: 30_000,
             });
           }
           // Discard all CLAUDE.md changes from working tree
@@ -222,7 +222,7 @@ export async function runClaudeMdMaintenance(
             {
               cwd: repoPath,
               encoding: 'utf-8',
-              timeout: 10_000,
+              timeout: 30_000,
             },
           );
           logger.info('CLAUDE.md changes reverted to keep working tree clean');
@@ -278,7 +278,7 @@ ${changedFiles.map((f) => `- \`${f}\``).join('\n')}
         fs.writeFileSync(tmpFile, issueBody);
         const ghResult = execSync(
           `gh issue create --repo ${targetRepo} --title "${title.replace(/"/g, '\\"')}" --label "nanoclaw,documentation" --body-file "${tmpFile}"`,
-          { cwd: repoPath, encoding: 'utf-8', timeout: 15_000 },
+          { cwd: repoPath, encoding: 'utf-8', timeout: 60_000 },
         );
         try {
           fs.unlinkSync(tmpFile);

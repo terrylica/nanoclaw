@@ -48,7 +48,7 @@ export function syncFalsePositivePatterns(): void {
   try {
     const result = execSync(
       `gh issue list --repo ${_targetRepo} --label nanoclaw --state closed --json title,state --limit 50`,
-      { encoding: 'utf-8', timeout: 10_000 },
+      { encoding: 'utf-8', timeout: 60_000 },
     );
     const issues = JSON.parse(result) as Array<{
       title: string;
@@ -283,7 +283,7 @@ export function verifyFindingScript(
     const result = execSync(cmd, {
       cwd: repoPath,
       encoding: 'utf-8',
-      timeout: 10_000,
+      timeout: 30_000,
       maxBuffer: 256 * 1024,
     });
     const output = result.trim();

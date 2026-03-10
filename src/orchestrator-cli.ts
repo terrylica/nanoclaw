@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Early startup marker — writes directly to fd 1 before any module loads
 import { writeSync } from 'fs';
-writeSync(1, `[nanoclaw] PID ${process.pid} starting at ${new Date().toISOString()}\n`);
+writeSync(
+  1,
+  `[nanoclaw] PID ${process.pid} starting at ${new Date().toISOString()}\n`,
+);
 /**
  * Standalone CLI for the NanoClaw orchestrator loop.
  * Runs independently of the Telegram bot / message loop.
