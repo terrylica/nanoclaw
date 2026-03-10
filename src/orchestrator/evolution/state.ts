@@ -55,6 +55,8 @@ export interface EvolutionState {
   lastTick?: string;
   /** Last self-scan timestamp */
   lastSelfScan?: string;
+  /** Last issue landscape check timestamp */
+  lastIssueLandscape?: string;
   /** Last Telegram update ID for callback polling */
   lastTelegramUpdateId?: number;
   /** Finding pattern activation scores: pattern -> { score, lastSeen } */

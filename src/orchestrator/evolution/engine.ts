@@ -316,24 +316,21 @@ export async function tick(
   // Poll Telegram callbacks (non-blocking)
   await pollCallbacks();
 
-  // Record tick
-  evoState.lastTick = new Date().toISOString();
-
   // Priority-ordered evolution steps
   // Each tick runs ONE step, then yields back to the main loop
 
   const steps = [
-    // Step 1: Issue landscape (every ~4 hours)
+    // Step 1: Issue landscape (every ~1 hour)
     async () => {
-      const lastTick = evoState.lastTick
-        ? new Date(evoState.lastTick).getTime()
+      const lastIssueLandscape = evoState.lastIssueLandscape
+        ? new Date(evoState.lastIssueLandscape).getTime()
         : 0;
-      const hoursSinceLastTick = (Date.now() - lastTick) / 3_600_000;
-      if (hoursSinceLastTick < 1) return null; // every hour
+      if (Date.now() - lastIssueLandscape < 60 * 60_000) return null;
+      evoState.lastIssueLandscape = new Date().toISOString();
       return stepIssueLandscape(config, apiKey);
     },
 
-    // Step 2: Self-scan (every 30 min — highest priority after issues)
+    // Step 2: Self-scan (every 5 min)
     async () => stepSelfScan(evoState),
 
     // Step 3: Prompt refinement
@@ -383,6 +380,7 @@ export async function tick(
     }
   }
 
+  evoState.lastTick = new Date().toISOString();
   saveEvolutionState(evoState);
 }
 
