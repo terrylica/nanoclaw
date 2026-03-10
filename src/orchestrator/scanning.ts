@@ -2,6 +2,7 @@
  * Whole-repo scanning: chunking, proactive scan functions, and scan cycle orchestration.
  */
 import { logger } from '../logger.js';
+import { getPrompt } from './evolution/prompt-registry.js';
 import { getHeadCommit, getScannableFiles } from './git-ops.js';
 import { extractWords, parseMiniMaxFindings } from './minimax-client.js';
 import {
@@ -292,11 +293,9 @@ JSON:`;
 export async function runProactiveScan(
   repoPath: string,
 ): Promise<{ findings: Finding[]; totalFiles: number; chunksScanned: number }> {
-  const result = await runAgenticSweep(
-    repoPath,
-    PROACTIVE_ENHANCEMENT_PROMPT,
-    'enhancement',
-  );
+  const enhEntry = getPrompt('enhancement-scan');
+  const prompt = enhEntry?.systemPrompt ?? PROACTIVE_ENHANCEMENT_PROMPT;
+  const result = await runAgenticSweep(repoPath, prompt, 'enhancement');
   return {
     findings: result.findings.map((f) => ({
       ...f,
@@ -311,9 +310,11 @@ export async function runProactiveScan(
 export async function runAlgoCorrectnessScan(
   repoPath: string,
 ): Promise<{ findings: Finding[]; totalFiles: number; chunksScanned: number }> {
+  const algoEntry = getPrompt('algo-correctness-scan');
+  const algoPrompt = algoEntry?.systemPrompt ?? PROACTIVE_ALGO_CORRECTNESS_PROMPT;
   const result = await runAgenticSweep(
     repoPath,
-    PROACTIVE_ALGO_CORRECTNESS_PROMPT,
+    algoPrompt,
     'algo-correctness',
   );
   return {
