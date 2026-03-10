@@ -176,7 +176,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
-  const previousCursor = lastAgentTimestamp[chatJid] || '';
+  // If there is no prior cursor, compute a synthetic cursor just before the
+  // first message in the batch so that a rollback only re-fetches this batch
+  // rather than the entire chat history.
+  const previousCursor =
+    lastAgentTimestamp[chatJid] !== undefined
+      ? lastAgentTimestamp[chatJid]
+      : String(Number(missedMessages[0].timestamp) - 1);
   lastAgentTimestamp[chatJid] =
     missedMessages[missedMessages.length - 1].timestamp;
   saveState();
