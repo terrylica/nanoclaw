@@ -377,20 +377,24 @@ async function stepGoalExecution(
     );
 
     // Check what files were changed (only new changes since stash)
+    // Use git diff --name-only for modified files + ls-files for untracked
     let changedFiles: string[] = [];
     try {
-      const gitStatus = execSync('git status --porcelain', {
+      const modified = execSync('git diff --name-only', {
         cwd: SELF_REPO,
         encoding: 'utf-8',
         timeout: 10_000,
       }).trim();
-      changedFiles = gitStatus
-        .split('\n')
-        .filter((line) => line.trim().length > 0)
-        .map((line) => line.slice(3).trim())
+      const untracked = execSync('git ls-files --others --exclude-standard', {
+        cwd: SELF_REPO,
+        encoding: 'utf-8',
+        timeout: 10_000,
+      }).trim();
+      changedFiles = [...modified.split('\n'), ...untracked.split('\n')]
+        .map((f) => f.trim())
         .filter((f) => f.length > 0);
     } catch {
-      // git status failed
+      // git diff failed
     }
 
     if (changedFiles.length === 0) {
