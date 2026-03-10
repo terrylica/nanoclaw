@@ -839,9 +839,10 @@ Respond with exactly YES or NO followed by a brief reason.`;
       ].join('\n'),
     );
 
-    // Graceful restart: SIGTERM triggers launchd auto-restart
-    logger.info('Triggering graceful restart via SIGTERM');
-    process.kill(process.pid, 'SIGTERM');
+    // Restart: exit(1) so launchd KeepAlive(SuccessfulExit=false) respawns us.
+    // exit(0) would be treated as intentional shutdown and NOT restarted.
+    logger.info('Triggering restart via exit(1) for launchd respawn');
+    process.exit(1);
   } catch (err) {
     logger.warn({ err }, 'Autonomous restart check failed (non-fatal)');
   }
