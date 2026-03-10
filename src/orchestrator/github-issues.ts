@@ -72,7 +72,9 @@ export function issueExistsFuzzy(title: string): boolean {
     );
     notify(
       `<b>⚠️ Dedup Check Failed</b>\n\nCould not query existing issues. Duplicate may be created.\n<code>${escapeHtml(String(err).slice(0, 150))}</code>`,
-    ).catch((notifyErr: unknown) => { console.error('[github-issues] notify failed (dedup check):', notifyErr); });
+    ).catch((notifyErr: unknown) => {
+      console.error('[github-issues] notify failed (dedup check):', notifyErr);
+    });
     return false;
   }
 }
@@ -99,7 +101,9 @@ function fetchRepoLabels(): string[] {
     logger.warn({ err }, 'Failed to fetch repo labels');
     notify(
       `<b>⚠️ Label Fetch Failed</b>\n\nUsing ${cachedRepoLabels ? 'cached' : 'default'} labels.\n<code>${escapeHtml(String(err).slice(0, 150))}</code>`,
-    ).catch((notifyErr: unknown) => { console.error('[github-issues] notify failed (label fetch):', notifyErr); });
+    ).catch((notifyErr: unknown) => {
+      console.error('[github-issues] notify failed (label fetch):', notifyErr);
+    });
     return cachedRepoLabels || [];
   }
 }
@@ -167,7 +171,12 @@ Return format: ["label1", "label2"]`;
     );
     notify(
       `<b>⚠️ Label Suggestion Failed</b>\n\nFalling back to keyword matching for: <code>${escapeHtml(finding.title.slice(0, 60))}</code>`,
-    ).catch((notifyErr: unknown) => { console.error('[github-issues] notify failed (label suggestion):', notifyErr); });
+    ).catch((notifyErr: unknown) => {
+      console.error(
+        '[github-issues] notify failed (label suggestion):',
+        notifyErr,
+      );
+    });
     const keywords = keywordMap[finding.type] || [];
     const matched = repoLabels.filter((label) =>
       keywords.some((kw) => label.toLowerCase().includes(kw)),
@@ -419,7 +428,12 @@ ${provenanceSection}
     logger.error({ err, title }, 'Failed to create GitHub issue');
     notify(
       `<b>❌ GitHub Issue Creation Failed</b>\n\n<code>${escapeHtml(title.slice(0, 80))}</code>\n<code>${escapeHtml(String(err).slice(0, 200))}</code>`,
-    ).catch((notifyErr: unknown) => { console.error('[github-issues] notify failed (issue creation):', notifyErr); });
+    ).catch((notifyErr: unknown) => {
+      console.error(
+        '[github-issues] notify failed (issue creation):',
+        notifyErr,
+      );
+    });
     return null;
   }
 }

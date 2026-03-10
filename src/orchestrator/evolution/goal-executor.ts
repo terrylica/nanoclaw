@@ -191,7 +191,8 @@ export async function executeGoal(
     if (!validation.passed) {
       updateAction(action, 'failed', {
         result: `Validation failed at gate '${validation.failedGate}': ${
-          validation.gates.find((g) => !g.passed)?.detail.slice(0, 200) || 'unknown'
+          validation.gates.find((g) => !g.passed)?.detail.slice(0, 200) ||
+          'unknown'
         }`,
       });
 
@@ -219,7 +220,9 @@ export async function executeGoal(
     const commitResult = commitInWorktree(worktreePath, commitMsg);
 
     if (!commitResult) {
-      updateAction(action, 'failed', { result: 'Commit in worktree failed (no staged changes)' });
+      updateAction(action, 'failed', {
+        result: 'Commit in worktree failed (no staged changes)',
+      });
       return result;
     }
 

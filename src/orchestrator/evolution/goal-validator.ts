@@ -52,7 +52,9 @@ export function runProtectedFileGate(changedFiles: string[]): GateResult {
 
   for (const file of changedFiles) {
     const normalized = file.replace(/^\.\//, '');
-    if (PROTECTED_FILES.some((pf) => normalized.endsWith(pf) || normalized === pf)) {
+    if (
+      PROTECTED_FILES.some((pf) => normalized.endsWith(pf) || normalized === pf)
+    ) {
       return {
         gate: 'protected-files',
         passed: false,
@@ -211,7 +213,10 @@ export async function runValidationPipeline(
   const protectedResult = runProtectedFileGate(changedFiles);
   gates.push(protectedResult);
   if (!protectedResult.passed) {
-    logger.info({ gate: protectedResult.gate, detail: protectedResult.detail }, 'Validation gate failed');
+    logger.info(
+      { gate: protectedResult.gate, detail: protectedResult.detail },
+      'Validation gate failed',
+    );
     return { passed: false, gates, failedGate: protectedResult.gate };
   }
 
@@ -219,7 +224,10 @@ export async function runValidationPipeline(
   const buildResult = runBuildGate(cwd);
   gates.push(buildResult);
   if (!buildResult.passed) {
-    logger.info({ gate: buildResult.gate, detail: buildResult.detail.slice(0, 100) }, 'Validation gate failed');
+    logger.info(
+      { gate: buildResult.gate, detail: buildResult.detail.slice(0, 100) },
+      'Validation gate failed',
+    );
     return { passed: false, gates, failedGate: buildResult.gate };
   }
 
@@ -227,7 +235,10 @@ export async function runValidationPipeline(
   const testResult = runTestGate(cwd);
   gates.push(testResult);
   if (!testResult.passed) {
-    logger.info({ gate: testResult.gate, detail: testResult.detail.slice(0, 100) }, 'Validation gate failed');
+    logger.info(
+      { gate: testResult.gate, detail: testResult.detail.slice(0, 100) },
+      'Validation gate failed',
+    );
     return { passed: false, gates, failedGate: testResult.gate };
   }
 
@@ -235,7 +246,10 @@ export async function runValidationPipeline(
   const reviewResult = await runMiniMaxReviewGate(diff, goalText, apiKey);
   gates.push(reviewResult);
   if (!reviewResult.passed) {
-    logger.info({ gate: reviewResult.gate, detail: reviewResult.detail }, 'Validation gate failed');
+    logger.info(
+      { gate: reviewResult.gate, detail: reviewResult.detail },
+      'Validation gate failed',
+    );
     return { passed: false, gates, failedGate: reviewResult.gate };
   }
 

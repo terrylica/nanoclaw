@@ -34,10 +34,7 @@ const WORKTREE_PREFIX = 'nanoclaw-goal-';
 // --- Worktree Lifecycle ---
 
 /** Create an isolated git worktree for a goal. Returns path and branch name. */
-export function createWorktree(
-  goalId: string,
-  repoPath: string,
-): WorktreeInfo {
+export function createWorktree(goalId: string, repoPath: string): WorktreeInfo {
   const branch = `goal/${goalId}`;
   const worktreePath = path.join(os.tmpdir(), `${WORKTREE_PREFIX}${goalId}`);
 
@@ -71,10 +68,7 @@ export function createWorktree(
     timeout: 60_000,
   });
 
-  logger.info(
-    { goalId, worktreePath, branch },
-    'Created goal worktree',
-  );
+  logger.info({ goalId, worktreePath, branch }, 'Created goal worktree');
 
   return { worktreePath, branch };
 }
@@ -120,10 +114,7 @@ export function getWorktreeDiff(worktreePath: string): string {
   const untrackedDiffs: string[] = [];
   for (const file of untracked.split('\n').filter(Boolean)) {
     try {
-      const content = fs.readFileSync(
-        path.join(worktreePath, file),
-        'utf-8',
-      );
+      const content = fs.readFileSync(path.join(worktreePath, file), 'utf-8');
       untrackedDiffs.push(
         `--- /dev/null\n+++ b/${file}\n${content
           .split('\n')
@@ -177,10 +168,7 @@ export function commitInWorktree(
  * Merge a goal branch into main via fast-forward.
  * Returns the merge commit hash, or null if merge failed.
  */
-export function mergeToMain(
-  branch: string,
-  repoPath: string,
-): string | null {
+export function mergeToMain(branch: string, repoPath: string): string | null {
   try {
     execSync(`git merge "${branch}" --ff-only`, {
       cwd: repoPath,

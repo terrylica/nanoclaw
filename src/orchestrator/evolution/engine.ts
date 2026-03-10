@@ -502,7 +502,10 @@ async function stepRepoHygiene(
 
   // Only report if we actually did something
   const didWork =
-    stashesDropped > 0 || filesCleaned > 0 || commitsPushed > 0 || worktreesCleaned > 0;
+    stashesDropped > 0 ||
+    filesCleaned > 0 ||
+    commitsPushed > 0 ||
+    worktreesCleaned > 0;
   if (didWork) {
     const parts: string[] = [];
     if (worktreesCleaned > 0)
