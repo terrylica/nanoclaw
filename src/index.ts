@@ -365,10 +365,6 @@ async function startMessageLoop(): Promise<void> {
       if (messages.length > 0) {
         logger.info({ count: messages.length }, 'New messages');
 
-        // Advance the "seen" cursor for all messages immediately
-        lastTimestamp = newTimestamp;
-        saveState();
-
         // Deduplicate by group
         const messagesByGroup = new Map<string, NewMessage[]>();
         for (const msg of messages) {
@@ -437,6 +433,10 @@ async function startMessageLoop(): Promise<void> {
             queue.enqueueMessageCheck(chatJid);
           }
         }
+
+        // Advance the "seen" cursor only after all messages have been processed
+        lastTimestamp = newTimestamp;
+        saveState();
       }
     } catch (err) {
       logger.error({ err }, 'Error in message loop');
