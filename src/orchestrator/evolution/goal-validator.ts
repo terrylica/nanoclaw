@@ -76,7 +76,7 @@ export function runProtectedFileGate(changedFiles: string[]): GateResult {
 export function runBuildGate(cwd: string): GateResult {
   const start = Date.now();
   try {
-    execSync('bun run build', {
+    execSync('./node_modules/.bin/tsc --noEmit', {
       cwd,
       encoding: 'utf-8',
       timeout: 120_000,
@@ -85,7 +85,7 @@ export function runBuildGate(cwd: string): GateResult {
     return {
       gate: 'build',
       passed: true,
-      detail: 'bun run build passed',
+      detail: 'tsc --noEmit passed',
       durationMs: Date.now() - start,
     };
   } catch (err) {

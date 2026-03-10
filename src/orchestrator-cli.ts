@@ -9,11 +9,10 @@ writeSync(
  * Standalone CLI for the NanoClaw orchestrator loop.
  * Runs independently of the Telegram bot / message loop.
  *
- * Usage: node dist/orchestrator-cli.js [--repo /path/to/opendeviationbar-py]
+ * Usage: node dist/orchestrator-cli.js --repo /path/to/repo
  */
 import { startOrchestratorLoop } from './orchestrator/index.js';
 import { logger } from './logger.js';
-import { readEnvFile } from './env.js';
 
 const args = process.argv.slice(2);
 let repoPath = '';
@@ -26,15 +25,7 @@ for (let i = 0; i < args.length; i++) {
 }
 
 if (!repoPath) {
-  const env = readEnvFile(['ODB_REPO_PATH']);
-  repoPath = process.env.ODB_REPO_PATH || env.ODB_REPO_PATH || '';
-}
-
-if (!repoPath) {
-  console.error(
-    'Usage: node dist/orchestrator-cli.js --repo /path/to/opendeviationbar-py',
-  );
-  console.error('  or set ODB_REPO_PATH in .env');
+  console.error('Usage: node dist/orchestrator-cli.js --repo /path/to/repo');
   process.exit(1);
 }
 

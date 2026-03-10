@@ -74,12 +74,13 @@ export function syncFalsePositivePatterns(): void {
       );
     }
   } catch (err) {
+    // Silently skip if repo has issues disabled — not critical for self-evolution
+    const errStr = String(err);
+    if (errStr.includes('disabled') || errStr.includes('404')) {
+      logger.debug('FP pattern sync skipped — repo issues may be disabled');
+      return;
+    }
     logger.warn({ err }, 'Failed to sync false positive patterns');
-    notify(
-      `<b>⚠️ FP Pattern Sync Failed</b>\n\n<code>${escapeHtml(String(err).slice(0, 200))}</code>`,
-    ).catch((notifyErr: unknown) => {
-      logger.warn({ err: notifyErr }, 'Telegram notification failed');
-    });
   }
 }
 
