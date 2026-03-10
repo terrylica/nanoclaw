@@ -66,7 +66,7 @@ export async function sendTelegramNotification(
   const t0 = Date.now();
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5_000);
+    const timer = setTimeout(() => controller.abort(), 30_000);
 
     const response = await fetch(
       `https://api.telegram.org/bot${botToken}/sendMessage`,
