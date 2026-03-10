@@ -9,6 +9,10 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  ReflexionAgent,
+  type TaskOutcome,
+} from './orchestrator/evolution/reflexion-agent.js';
+import {
   getAllTasks,
   getDueTasks,
   getTaskById,
@@ -227,6 +231,16 @@ async function runTask(
     result,
     error,
   });
+
+  // Self-critique step: reflect on the outcome to generate verbal feedback
+  // persisted in the reflection store for subsequent evolution steps.
+  const critiqueAgent = new ReflexionAgent('task-scheduler');
+  const outcome: TaskOutcome = {
+    task: task.prompt.slice(0, 80),
+    success: !error,
+    detail: error ?? (result ? result.slice(0, 120) : undefined),
+  };
+  critiqueAgent.reflect([outcome]);
 
   const nextRun = computeNextRun(task);
   const resultSummary = error
