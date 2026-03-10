@@ -362,7 +362,14 @@ export async function runContainerAgent(
             resetTimeout();
             // Call onOutput for all markers (including null results)
             // so idle timers start even for "silent" query completions.
-            outputChain = outputChain.then(() => onOutput(parsed));
+            outputChain = outputChain
+              .then(() => onOutput(parsed))
+              .catch((err: unknown) => {
+                logger.warn(
+                  { group: group.name, error: err },
+                  'Error in onOutput handler',
+                );
+              });
           } catch (err) {
             logger.warn(
               { group: group.name, error: err },
@@ -455,13 +462,25 @@ export async function runContainerAgent(
             { group: group.name, containerName, duration, code },
             'Container timed out after output (idle cleanup)',
           );
-          outputChain.then(() => {
-            resolve({
-              status: 'success',
-              result: null,
-              newSessionId,
+          outputChain
+            .then(() => {
+              resolve({
+                status: 'success',
+                result: null,
+                newSessionId,
+              });
+            })
+            .catch((err: unknown) => {
+              logger.warn(
+                { group: group.name, error: err },
+                'Error in outputChain during timeout resolution',
+              );
+              resolve({
+                status: 'success',
+                result: null,
+                newSessionId,
+              });
             });
-          });
           return;
         }
 
@@ -559,17 +578,29 @@ export async function runContainerAgent(
 
       // Streaming mode: wait for output chain to settle, return completion marker
       if (onOutput) {
-        outputChain.then(() => {
-          logger.info(
-            { group: group.name, duration, newSessionId },
-            'Container completed (streaming mode)',
-          );
-          resolve({
-            status: 'success',
-            result: null,
-            newSessionId,
+        outputChain
+          .then(() => {
+            logger.info(
+              { group: group.name, duration, newSessionId },
+              'Container completed (streaming mode)',
+            );
+            resolve({
+              status: 'success',
+              result: null,
+              newSessionId,
+            });
+          })
+          .catch((err: unknown) => {
+            logger.warn(
+              { group: group.name, error: err },
+              'Error in outputChain during completion resolution',
+            );
+            resolve({
+              status: 'success',
+              result: null,
+              newSessionId,
+            });
           });
-        });
         return;
       }
 
