@@ -9,9 +9,6 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { logger } from '../../logger.js';
-import { queryMiniMax } from '../minimax-client.js';
-
 // --- Constants ---
 
 const EON_DIR = path.join(os.homedir(), 'eon');
@@ -68,7 +65,7 @@ export function discoverRepos(): RepoCandidate[] {
         lastCommitDate,
         commitCount30d: commitCount,
         languages,
-        score: 0, // Scored later by MiniMax
+        score: 0,
       });
     } catch {
       // Skip repos we can't read
@@ -104,52 +101,4 @@ function detectLanguages(repoPath: string): string[] {
     // ignore
   }
   return [...languages];
-}
-
-/** Score repos using MiniMax for relevance to financial engineering */
-export async function scoreRepos(
-  candidates: RepoCandidate[],
-  apiKey: string,
-): Promise<RepoCandidate[]> {
-  if (candidates.length === 0) return [];
-
-  const repoList = candidates
-    .slice(0, 20)
-    .map(
-      (r) =>
-        `- ${r.name}: ${r.languages.join('/')} | ${r.commitCount30d} commits/30d | last: ${r.lastCommitDate.slice(0, 10)}`,
-    )
-    .join('\n');
-
-  const prompt = `Score these repositories for code analysis relevance. Consider:
-1. Financial engineering domain relevance
-2. Active development (recent commits)
-3. Language support (Rust, Python best supported)
-4. Complexity (more complex = more value from analysis)
-
-REPOSITORIES:
-${repoList}
-
-Respond with JSON array: [{"name": "repo-name", "score": 0-100, "reason": "brief"}]
-Score 80+ = high value, 50-80 = moderate, <50 = low priority.`;
-
-  try {
-    const raw = await queryMiniMax(prompt, apiKey);
-    const jsonMatch = raw.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return candidates;
-
-    const scores = JSON.parse(jsonMatch[0]) as Array<{
-      name: string;
-      score: number;
-    }>;
-
-    for (const scored of scores) {
-      const candidate = candidates.find((c) => c.name === scored.name);
-      if (candidate) candidate.score = scored.score;
-    }
-  } catch (err) {
-    logger.warn({ err }, 'Repo scoring failed');
-  }
-
-  return candidates.sort((a, b) => b.score - a.score);
 }
