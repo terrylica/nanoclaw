@@ -3,12 +3,21 @@
  * challenge findings before they reach the main pipeline.
  */
 import { logger } from '../logger.js';
+import { getPrompt } from './evolution/prompt-registry.js';
 import { readRepoFile } from './git-ops.js';
 import { parseMiniMaxFindings, queryMiniMax } from './minimax-client.js';
 import { traceId } from './types.js';
 import type { Finding } from './types.js';
 
-const SELF_VALIDATION_ROUNDS = [
+// Registry prompt IDs → self-validation round metadata
+const ROUND_REGISTRY_MAP = [
+  { registryId: 'self-val-fact-check', name: 'Fact-Check', icon: '🔬' },
+  { registryId: 'self-val-domain-rebuttal', name: 'Domain Rebuttal', icon: '📊' },
+  { registryId: 'self-val-reproducibility', name: 'Reproducibility Check', icon: '🧪' },
+];
+
+// Hardcoded fallbacks
+const FALLBACK_ROUNDS = [
   {
     name: 'Fact-Check',
     icon: '🔬',
@@ -57,6 +66,18 @@ If ALL findings are speculative, respond with: []`,
   },
 ];
 
+/** Load self-validation rounds from registry, falling back to hardcoded */
+function getSelfValidationRounds(): typeof FALLBACK_ROUNDS {
+  return ROUND_REGISTRY_MAP.map(({ registryId, name, icon }) => {
+    const entry = getPrompt(registryId);
+    if (entry) {
+      return { name, icon, systemPrompt: entry.systemPrompt };
+    }
+    return FALLBACK_ROUNDS.find((r) => r.name === name)!;
+  });
+}
+
+
 /**
  * Run iterative MiniMax self-validation: challenge findings through multiple
  * adversarial rounds before they reach the main validation pipeline.
@@ -71,7 +92,8 @@ export async function runIterativeSelfValidation(
 
   let survivors = findings;
 
-  for (const round of SELF_VALIDATION_ROUNDS) {
+  const rounds = getSelfValidationRounds();
+  for (const round of rounds) {
     if (survivors.length === 0) break;
 
     const roundTid = traceId();

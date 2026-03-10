@@ -3,6 +3,7 @@
  * and aggregate triage pipeline.
  */
 import { logger } from '../logger.js';
+import { getPrompt } from './evolution/prompt-registry.js';
 import { readRepoFile } from './git-ops.js';
 import {
   deduplicateFindings,
@@ -47,7 +48,17 @@ Prefer returning [] over returning a questionable finding.
 
 JSON:`;
 
-export const EXPERT_PERSPECTIVES: ExpertPerspective[] = [
+// Registry prompt IDs → expert perspective names
+const EXPERT_REGISTRY_MAP: Array<{ registryId: string; name: string }> = [
+  { registryId: 'expert-bug-hunter', name: 'bug-hunter' },
+  { registryId: 'expert-performance', name: 'performance-analyst' },
+  { registryId: 'expert-reliability', name: 'reliability-engineer' },
+  { registryId: 'expert-test-coverage', name: 'test-coverage-auditor' },
+  { registryId: 'expert-security', name: 'security-reviewer' },
+];
+
+// Hardcoded fallbacks (used when registry has no entry for a prompt)
+const FALLBACK_EXPERTS: ExpertPerspective[] = [
   {
     name: 'bug-hunter',
     systemPrompt: `You are a bug hunter specializing in Rust and Python code. You look for:
@@ -128,6 +139,24 @@ Only report genuine security concerns, not theoretical risks.
 ${EXPERT_RESPONSE_FORMAT}`,
   },
 ];
+
+/** Load expert perspectives from registry, falling back to hardcoded defaults */
+export function getExpertPerspectives(): ExpertPerspective[] {
+  return EXPERT_REGISTRY_MAP.map(({ registryId, name }) => {
+    const entry = getPrompt(registryId);
+    if (entry) {
+      return {
+        name,
+        systemPrompt: `${entry.systemPrompt}\n${EXPERT_RESPONSE_FORMAT}`,
+      };
+    }
+    const fallback = FALLBACK_EXPERTS.find((e) => e.name === name);
+    return fallback!;
+  });
+}
+
+// Exported for backward compatibility (now dynamically loaded)
+export const EXPERT_PERSPECTIVES: ExpertPerspective[] = FALLBACK_EXPERTS;
 
 export function buildTriagePrompt(
   diff: string,
@@ -228,8 +257,9 @@ export async function triageChanges(
     openGrepFindings,
   );
 
+  const perspectives = getExpertPerspectives();
   const perspectiveResults = await Promise.allSettled(
-    EXPERT_PERSPECTIVES.map(async (expert) => {
+    perspectives.map(async (expert) => {
       const t0 = Date.now();
       try {
         const raw = await queryMiniMax(prompt, apiKey, expert.systemPrompt);
