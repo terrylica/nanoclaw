@@ -198,7 +198,7 @@ async function stepRuleExpansion(
 async function stepSelfScan(
   evoState: EvolutionState,
 ): Promise<EvolutionAction | null> {
-  // Self-scan every 10 minutes
+  // Self-scan every 5 minutes
   const lastSelfScan = evoState.lastSelfScan
     ? new Date(evoState.lastSelfScan).getTime()
     : 0;
