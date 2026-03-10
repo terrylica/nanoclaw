@@ -233,7 +233,7 @@ export function runOpenGrepOnFiles(
     logger.info('OpenGrep scan failed (non-fatal)');
     notify(
       `<b>⚠️ OpenGrep SAST Failed</b>\n\nSecurity scanning unavailable this cycle.`,
-    ).catch(() => {});
+    ).catch((notifyErr: unknown) => { logger.warn({ err: notifyErr }, 'OpenGrep notification failed'); });
     return '';
   }
 }

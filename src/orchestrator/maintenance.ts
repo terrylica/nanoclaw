@@ -59,7 +59,7 @@ export function syncCcSkills(ccSkillsPath: string): void {
     logger.warn({ err }, 'cc-skills sync failed (non-fatal)');
     notify(
       `<b>⚠️ cc-skills Sync Failed</b>\n\n<code>${escapeHtml(String(err).slice(0, 200))}</code>`,
-    ).catch(() => {});
+    ).catch((notifyErr: unknown) => { logger.warn({ err: notifyErr }, 'Telegram notification failed'); });
   }
 }
 
