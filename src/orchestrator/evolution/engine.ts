@@ -476,8 +476,9 @@ async function stepResearch(
       strategyIndex,
     );
 
-    // Advance strategy rotation for next cycle
+    // Advance strategy rotation for next cycle — save immediately to survive restarts
     evoState.researchStrategyIndex = (strategyIndex + 1) % strategies.length;
+    saveEvolutionState(evoState);
 
     // Record topics for future dedup
     for (const topic of result.topics) {
