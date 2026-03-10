@@ -377,6 +377,14 @@ export async function runContainerAgent(
             );
           }
         }
+        // Prevent unbounded growth from malformed output lacking end markers
+        if (parseBuffer.length > CONTAINER_MAX_OUTPUT_SIZE) {
+          const lastStart = parseBuffer.lastIndexOf(OUTPUT_START_MARKER);
+          parseBuffer =
+            lastStart !== -1 && parseBuffer.length - lastStart < CONTAINER_MAX_OUTPUT_SIZE
+              ? parseBuffer.slice(lastStart)
+              : '';
+        }
       }
     });
 
