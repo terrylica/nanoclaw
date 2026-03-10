@@ -1,11 +1,17 @@
 /**
- * Triple web research cascade for gathering SOTA knowledge.
+ * Curiosity-driven research engine with exploration diversification.
  *
- * Channel 1: Firecrawl (free, self-hosted) - known URLs
- * Channel 2: Claude Code WebSearch/WebFetch - open-ended queries
- * Channel 3: agent-browser (Playwright) - last resort
+ * Four research strategies rotate each cycle to maximize coverage:
+ * 1. Exploit — go deeper on highest-yield domains
+ * 2. Explore — search underexplored or untouched domains
+ * 3. Serendipity — cross-pollinate from adjacent fields
+ * 4. Contrarian — challenge current approach, search for alternatives
  *
- * Cascade: Firecrawl first → Claude WebSearch → agent-browser
+ * Claude Code runs multi-turn research sessions (WebSearch + WebFetch)
+ * with strategy-specific system prompts that guide exploration behavior.
+ *
+ * MiniMax handles topic selection, synthesis, and relevance scoring.
+ * Exploration map tracks domain coverage and yield for adaptive steering.
  */
 import path from 'path';
 import { spawnSync } from 'child_process';
@@ -15,7 +21,7 @@ import { logger } from '../../logger.js';
 // --- Constants ---
 
 const FIRECRAWL_URL = 'http://172.25.236.1:3003';
-const CLAUDE_SEARCH_BUDGET = '1.00';
+const CLAUDE_RESEARCH_BUDGET = '1.50';
 const CLAUDE_BIN = path.join(
   process.env.HOME || '/Users/terryli',
   '.local/bin/claude',
@@ -28,6 +34,54 @@ export interface ResearchResult {
   source: 'firecrawl' | 'claude-websearch' | 'agent-browser' | 'failed';
   url?: string;
 }
+
+export type ResearchStrategy =
+  | 'exploit'
+  | 'explore'
+  | 'serendipity'
+  | 'contrarian';
+
+export interface ExplorationDomain {
+  searches: number;
+  goalsQueued: number;
+  goalsSucceeded: number;
+  lastSearched: string;
+}
+
+export interface ExplorationMap {
+  [domain: string]: ExplorationDomain;
+}
+
+const STRATEGIES: ResearchStrategy[] = [
+  'exploit',
+  'explore',
+  'serendipity',
+  'contrarian',
+];
+
+// Seed domains NanoClaw can explore (expanded beyond the original 4)
+const KNOWN_DOMAINS = [
+  'ast-grep rules and patterns',
+  'semgrep and opengrep rule engineering',
+  'tree-sitter grammar and query patterns',
+  'prompt engineering for code review (EvoPrompt, DSPy, GEPA)',
+  'autonomous agent architectures (Reflexion, LATS, Voyager)',
+  'TypeScript compiler API and custom transforms',
+  'Bun runtime optimization and native APIs',
+  'git hook automation and pre-commit frameworks',
+  'LLM-as-judge evaluation frameworks',
+  'code smell detection and refactoring patterns',
+  'fuzzing and property-based testing for TypeScript',
+  'incremental computation and caching for CI pipelines',
+  'program synthesis and code generation techniques',
+  'multi-agent debate and verification protocols',
+  'developer experience tooling (LSP, diagnostics, codemods)',
+  'WASM-based sandboxing for safe code execution',
+  'knowledge graph construction from codebases',
+  'differential testing and mutation testing',
+  'self-healing systems and auto-remediation patterns',
+  'observability and structured logging best practices',
+];
 
 // --- Channel 1: Firecrawl ---
 
@@ -50,9 +104,55 @@ async function firecrawlScrape(url: string): Promise<string | null> {
   }
 }
 
-// --- Channel 2: Claude Code WebSearch ---
+// --- Channel 2: Claude Code Multi-Turn Research Agent ---
 
-function claudeWebSearch(query: string): string | null {
+/**
+ * Run a multi-turn Claude research session with strategy-specific instructions.
+ * Unlike the old one-shot search, this gives Claude a system prompt that guides
+ * its exploration behavior (follow unexpected leads, compare sources, etc.).
+ */
+function claudeResearchAgent(
+  query: string,
+  strategy: ResearchStrategy,
+  explorationContext: string,
+): string | null {
+  const strategyInstructions: Record<ResearchStrategy, string> = {
+    exploit: `You are doing DEEP DIVE research. Go beyond surface-level results.
+For each finding, use WebFetch to read the actual source (GitHub repos, papers, docs).
+Follow references and "see also" links. Compare multiple implementations.
+We want depth and specifics — code patterns, configuration examples, benchmarks.`,
+
+    explore: `You are doing EXPLORATORY research into unfamiliar territory.
+Cast a wide net. Search for multiple angles on this topic.
+Look for lesser-known tools, obscure blog posts, academic papers.
+If you find something unexpected but potentially useful, follow that lead.
+Prioritize novelty — we want things we haven't seen before.`,
+
+    serendipity: `You are doing CROSS-POLLINATION research.
+The topic may seem unrelated to code analysis at first — that's intentional.
+Your job is to find surprising connections and transferable patterns.
+Search broadly, then ask: "How could this technique apply to automated code review?"
+Look at how OTHER fields solve similar problems (biology, game AI, supply chains).`,
+
+    contrarian: `You are doing CONTRARIAN research — deliberately challenging assumptions.
+Search for: criticisms, failure cases, alternatives, and "X considered harmful" posts.
+If the topic is about a tool, search for its competitors and why people switched away.
+If it's about a technique, search for when it fails and what works better.
+We want to avoid blind spots and groupthink.`,
+  };
+
+  const systemPrompt = `${strategyInstructions[strategy]}
+
+EXPLORATION CONTEXT (what we already know):
+${explorationContext}
+
+INSTRUCTIONS:
+- Use WebSearch to find relevant pages, then WebFetch to read the most promising ones
+- Synthesize findings into a structured summary
+- Include specific tool names, GitHub repos, npm packages, or paper titles
+- Note any surprising or counterintuitive findings
+- End with 2-3 concrete "next steps" someone could implement`;
+
   try {
     const result = spawnSync(
       CLAUDE_BIN,
@@ -61,36 +161,36 @@ function claudeWebSearch(query: string): string | null {
         '--allowedTools',
         'WebSearch,WebFetch',
         '--max-budget-usd',
-        CLAUDE_SEARCH_BUDGET,
+        CLAUDE_RESEARCH_BUDGET,
         '--output-format',
         'text',
       ],
       {
-        input: `Search the web for: ${query}\n\nReturn a concise summary of the most relevant findings.`,
+        input: `${systemPrompt}\n\n---\n\nResearch topic: ${query}`,
         encoding: 'utf-8',
-        timeout: 120_000,
-        maxBuffer: 1024 * 1024,
+        timeout: 180_000, // 3 min for multi-turn
+        maxBuffer: 2 * 1024 * 1024,
       },
     );
 
     if (result.error || result.status !== 0) {
       logger.debug(
         { error: String(result.error || result.stderr).slice(0, 200) },
-        'Claude WebSearch failed',
+        'Claude research agent failed',
       );
       return null;
     }
     const output = result.stdout.trim();
-    if (!output || output.length <= 50 || output.startsWith('Error:')) {
-      logger.debug(
-        { outputLen: output.length, preview: output.slice(0, 100) },
-        'Claude WebSearch empty/error result',
-      );
+    if (!output || output.length <= 100 || output.startsWith('Error:')) {
       return null;
     }
     logger.info(
-      { query: query.slice(0, 50), outputLen: output.length },
-      'Claude WebSearch success',
+      {
+        query: query.slice(0, 50),
+        strategy,
+        outputLen: output.length,
+      },
+      'Claude research agent success',
     );
     return output;
   } catch {
@@ -98,57 +198,241 @@ function claudeWebSearch(query: string): string | null {
   }
 }
 
+// --- Strategy-Driven Topic Generation ---
+
+/**
+ * Build a strategy-specific prompt for MiniMax to pick research topics.
+ * Each strategy steers MiniMax toward different parts of the solution space.
+ */
+function buildTopicPrompt(
+  strategy: ResearchStrategy,
+  explorationMap: ExplorationMap,
+  pastTopics: string[],
+): string {
+  const avoidSection =
+    pastTopics.length > 0
+      ? `\nDO NOT repeat these previously researched topics:\n${pastTopics
+          .slice(-20)
+          .map((t) => `- ${t}`)
+          .join('\n')}`
+      : '';
+
+  // Compute domain stats for the prompt
+  const domainEntries = Object.entries(explorationMap);
+  const highYield = domainEntries
+    .filter(([, d]) => d.goalsQueued > 0)
+    .sort(([, a], [, b]) => b.goalsQueued / b.searches - a.goalsQueued / a.searches)
+    .slice(0, 5)
+    .map(([domain, d]) => `${domain} (${d.goalsQueued}/${d.searches} yield)`)
+    .join(', ');
+
+  const unexplored = KNOWN_DOMAINS.filter((d) => !explorationMap[d])
+    .slice(0, 8)
+    .join(', ');
+
+  const stale = domainEntries
+    .filter(
+      ([, d]) =>
+        Date.now() - new Date(d.lastSearched).getTime() > 7 * 24 * 60 * 60_000,
+    )
+    .map(([domain]) => domain)
+    .slice(0, 5)
+    .join(', ');
+
+  const baseContext = `NanoClaw is a TypeScript/Bun autonomous code validation orchestrator.
+It uses ast-grep rules, MiniMax M2.5 for triage, Claude Code for validation.
+It has a self-evolution engine that discovers issues, generates goals, and implements fixes.`;
+
+  const strategyPrompts: Record<ResearchStrategy, string> = {
+    exploit: `${baseContext}
+
+STRATEGY: EXPLOIT — go deeper on what's working.
+${highYield ? `High-yield domains: ${highYield}` : 'No yield data yet — pick domains most likely to produce concrete code improvements.'}
+Pick 2 topics that drill DEEPER into the most productive research areas.
+We want specific techniques, tools, or patterns — not broad overviews.`,
+
+    explore: `${baseContext}
+
+STRATEGY: EXPLORE — search the unknown.
+${unexplored ? `Unexplored domains: ${unexplored}` : 'Most domains have been searched — try completely new angles.'}
+${stale ? `Stale domains (not searched in 7+ days): ${stale}` : ''}
+Pick 2 topics from areas we have NOT explored yet. Prioritize novelty.`,
+
+    serendipity: `${baseContext}
+
+STRATEGY: SERENDIPITY — cross-pollinate from adjacent fields.
+Think beyond code analysis. What techniques from OTHER domains could apply?
+Consider: game AI (MCTS, self-play), biology (genetic algorithms, immune systems),
+distributed systems (consensus, gossip protocols), human factors (cognitive load,
+attention management), NLP (chain-of-thought, retrieval-augmented generation).
+Pick 2 topics from adjacent fields that could transfer to code review automation.`,
+
+    contrarian: `${baseContext}
+
+STRATEGY: CONTRARIAN — challenge our assumptions.
+NanoClaw currently uses: MiniMax for triage, Claude for validation, ast-grep for static analysis.
+What if these are wrong? Search for:
+- Alternatives to LLM-based code review (symbolic analysis, formal verification)
+- Criticisms of autonomous agents (failure modes, when NOT to automate)
+- Anti-patterns in self-modifying systems
+- Cases where simpler tools outperform complex ones
+Pick 2 topics that deliberately challenge NanoClaw's current architecture.`,
+  };
+
+  return `${strategyPrompts[strategy]}
+${avoidSection}
+
+Return EXACTLY 2 lines, one topic per line. No numbering, no bullets, just the search query.`;
+}
+
+// --- Exploration Map Helpers ---
+
+export function updateExplorationMap(
+  map: ExplorationMap,
+  domain: string,
+  goalsQueued: number,
+): void {
+  if (!map[domain]) {
+    map[domain] = {
+      searches: 0,
+      goalsQueued: 0,
+      goalsSucceeded: 0,
+      lastSearched: new Date().toISOString(),
+    };
+  }
+  map[domain].searches++;
+  map[domain].goalsQueued += goalsQueued;
+  map[domain].lastSearched = new Date().toISOString();
+}
+
+/** Classify a topic into the nearest known domain (or create a new one) */
+function classifyDomain(topic: string): string {
+  const lower = topic.toLowerCase();
+  for (const domain of KNOWN_DOMAINS) {
+    // Simple keyword overlap check
+    const keywords = domain
+      .toLowerCase()
+      .split(/[\s,()]+/)
+      .filter((w) => w.length > 3);
+    const matches = keywords.filter((kw) => lower.includes(kw)).length;
+    if (matches >= 2 || (keywords.length <= 3 && matches >= 1)) {
+      return domain;
+    }
+  }
+  // New domain — use the topic itself (normalized)
+  return topic.slice(0, 80).toLowerCase();
+}
+
+/** Build exploration context string for the Claude research agent */
+function buildExplorationContext(
+  explorationMap: ExplorationMap,
+  pastTopics: string[],
+): string {
+  const entries = Object.entries(explorationMap);
+  if (entries.length === 0 && pastTopics.length === 0) {
+    return 'This is our first research cycle. No prior exploration data.';
+  }
+
+  const lines: string[] = [];
+  if (entries.length > 0) {
+    const sorted = entries.sort(([, a], [, b]) => b.searches - a.searches);
+    lines.push('Domains explored so far:');
+    for (const [domain, d] of sorted.slice(0, 10)) {
+      const yield_ =
+        d.searches > 0
+          ? `${Math.round((d.goalsQueued / d.searches) * 100)}% yield`
+          : 'no data';
+      lines.push(`- ${domain}: ${d.searches} searches, ${yield_}`);
+    }
+  }
+  if (pastTopics.length > 0) {
+    lines.push(`\nRecent topics (${pastTopics.length} total):`);
+    for (const t of pastTopics.slice(-5)) {
+      lines.push(`- ${t}`);
+    }
+  }
+  return lines.join('\n');
+}
+
 // --- Cascade ---
 
 /** Research a known URL (Firecrawl first, then Claude) */
 async function researchUrl(url: string): Promise<ResearchResult> {
-  // Channel 1: Firecrawl (free)
   const firecrawlResult = await firecrawlScrape(url);
   if (firecrawlResult) {
     logger.info({ url, source: 'firecrawl' }, 'Research via Firecrawl');
     return { content: firecrawlResult, source: 'firecrawl', url };
   }
 
-  // Channel 2: Claude WebSearch (budget-capped)
-  const claudeResult = claudeWebSearch(`site:${url}`);
+  const claudeResult = claudeResearchAgent(
+    `Analyze this resource: ${url}`,
+    'exploit',
+    '',
+  );
   if (claudeResult) {
-    logger.info({ url, source: 'claude-websearch' }, 'Research via Claude');
     return { content: claudeResult, source: 'claude-websearch', url };
   }
 
-  return {
-    content: '',
-    source: 'failed',
-    url,
-  };
+  return { content: '', source: 'failed', url };
 }
 
+/** Research an open-ended query with strategy-specific Claude agent */
+export async function researchQuery(
+  query: string,
+  strategy: ResearchStrategy = 'explore',
+  explorationContext: string = '',
+): Promise<ResearchResult> {
+  const claudeResult = claudeResearchAgent(query, strategy, explorationContext);
+  if (claudeResult) {
+    logger.info(
+      { query: query.slice(0, 50), strategy, source: 'claude-websearch' },
+      'Research query',
+    );
+    return { content: claudeResult, source: 'claude-websearch' };
+  }
+
+  return { content: '', source: 'failed' };
+}
+
+// --- Main Research Cycle ---
+
 /**
- * Run a full research cycle: MiniMax picks topics → Claude researches → MiniMax synthesizes.
- * Returns actionable items that can be queued as goals.
+ * Run a curiosity-driven research cycle with strategy rotation.
+ *
+ * Each cycle:
+ * 1. Pick strategy (rotating: exploit → explore → serendipity → contrarian)
+ * 2. MiniMax generates topics guided by strategy + exploration map
+ * 3. Claude multi-turn research agent investigates with strategy-specific behavior
+ * 4. MiniMax synthesizes actionable items
+ * 5. Relevance scoring filters low-value noise
+ * 6. Update exploration map with yield data
  */
 export async function runResearchCycle(
   apiKey: string,
   pastTopics: string[] = [],
-): Promise<{ topics: string[]; actionItems: string[] }> {
+  explorationMap: ExplorationMap = {},
+  strategyIndex: number = 0,
+): Promise<{
+  topics: string[];
+  actionItems: string[];
+  strategy: ResearchStrategy;
+  domains: string[];
+}> {
   const { queryMiniMax } = await import('../minimax-client.js');
+  const strategy = STRATEGIES[strategyIndex % STRATEGIES.length];
 
-  // Step 1: MiniMax picks research topics, avoiding past searches
-  const avoidSection =
-    pastTopics.length > 0
-      ? `\n\nDO NOT repeat these previously researched topics:\n${pastTopics.slice(-20).map((t) => `- ${t}`).join('\n')}\n\nPick something NEW and different.`
-      : '';
+  logger.info(
+    {
+      strategy,
+      cycleIndex: strategyIndex,
+      domainsExplored: Object.keys(explorationMap).length,
+      pastTopicCount: pastTopics.length,
+    },
+    'Research cycle starting',
+  );
 
-  const topicPrompt = `You are NanoClaw's research advisor. NanoClaw is a TypeScript-based autonomous code validation orchestrator that uses ast-grep rules, MiniMax for triage, and Claude Code for validation.
-
-Pick 2 research topics that would provide the highest-value improvements. Focus on:
-- Static analysis techniques (ast-grep, semgrep, tree-sitter)
-- Prompt engineering for code review (EvoPrompt, DSPy, GEPA)
-- Autonomous agent architectures (Reflexion, LATS, self-improving agents)
-- TypeScript/Bun runtime best practices${avoidSection}
-
-Return EXACTLY 2 lines, one topic per line. No numbering, no bullets, just the search query.`;
-
+  // Step 1: MiniMax picks topics using strategy-specific prompt
+  const topicPrompt = buildTopicPrompt(strategy, explorationMap, pastTopics);
   const topicResponse = await queryMiniMax(topicPrompt, apiKey);
   const topics = topicResponse
     .trim()
@@ -156,22 +440,44 @@ Return EXACTLY 2 lines, one topic per line. No numbering, no bullets, just the s
     .filter((l: string) => l.trim().length > 10)
     .slice(0, 2);
 
-  if (topics.length === 0) return { topics: [], actionItems: [] };
+  if (topics.length === 0) {
+    return { topics: [], actionItems: [], strategy, domains: [] };
+  }
 
-  // Step 2: Claude Code researches each topic
+  // Classify topics into domains
+  const domains = topics.map(classifyDomain);
+
+  // Step 2: Claude multi-turn research with strategy-specific behavior
+  const explorationContext = buildExplorationContext(
+    explorationMap,
+    pastTopics,
+  );
   const results: ResearchResult[] = [];
   for (const topic of topics) {
-    const result = await researchQuery(topic);
+    const result = await researchQuery(topic, strategy, explorationContext);
     if (result.source !== 'failed') results.push(result);
   }
 
-  if (results.length === 0) return { topics, actionItems: [] };
+  if (results.length === 0) {
+    // Update exploration map even on failure
+    for (const domain of domains) {
+      updateExplorationMap(explorationMap, domain, 0);
+    }
+    return { topics, actionItems: [], strategy, domains };
+  }
 
-  // Step 3: MiniMax synthesizes actionable items
+  // Step 3: MiniMax synthesizes with strategy-aware prompt
   const researchContent = results
     .map((r: ResearchResult) => r.content.slice(0, 5000))
     .join('\n\n---\n\n');
-  const synthesisPrompt = `Based on this research about code analysis and autonomous agents, identify concrete, actionable improvements for NanoClaw (TypeScript/Bun codebase).
+
+  const synthesisPrompt = `You are synthesizing research findings into concrete improvements for NanoClaw (TypeScript/Bun autonomous code validation system).
+
+Research strategy was: ${strategy.toUpperCase()}
+${strategy === 'serendipity' ? 'Focus on TRANSFERABLE patterns — how can these ideas apply to code analysis?' : ''}
+${strategy === 'contrarian' ? 'Focus on ALTERNATIVES and CRITICISMS — what should NanoClaw change or stop doing?' : ''}
+${strategy === 'exploit' ? 'Focus on SPECIFIC techniques — exact tool names, config patterns, code snippets.' : ''}
+${strategy === 'explore' ? 'Focus on NEW capabilities — things NanoClaw cannot do today but could.' : ''}
 
 Research:
 ${researchContent}
@@ -185,30 +491,40 @@ Return up to 5 specific, implementable action items. Each should be a single sen
     .filter((l: string) => l.trim().length > 20)
     .slice(0, 5);
 
-  // Step 4: Score each action item for relevance to NanoClaw's self-evolution
-  // Only queue items with relevance >= 0.7 to prevent speculative bloat
+  // Step 4: Score each action item for relevance
   const actionItems: string[] = [];
   for (const item of rawItems) {
     const score = await scoreGoalRelevance(item, apiKey);
     if (score >= 0.7) {
       actionItems.push(item);
       logger.debug(
-        { item: item.slice(0, 60), score },
+        { item: item.slice(0, 60), score, strategy },
         'Research goal accepted',
       );
     } else {
       logger.debug(
-        { item: item.slice(0, 60), score },
+        { item: item.slice(0, 60), score, strategy },
         'Research goal rejected (low relevance)',
       );
     }
   }
 
+  // Step 5: Update exploration map
+  for (const domain of domains) {
+    updateExplorationMap(explorationMap, domain, actionItems.length);
+  }
+
   logger.info(
-    { topics, rawCount: rawItems.length, acceptedCount: actionItems.length },
+    {
+      strategy,
+      topics,
+      rawCount: rawItems.length,
+      acceptedCount: actionItems.length,
+      domains,
+    },
     'Research cycle complete',
   );
-  return { topics, actionItems };
+  return { topics, actionItems, strategy, domains };
 }
 
 /** Score a research goal for relevance to NanoClaw's self-evolution (0.0-1.0). */
@@ -237,22 +553,4 @@ Respond with ONLY a number between 0.0 and 1.0, nothing else.`;
   } catch {
     return 0; // Fail closed — don't queue unscored goals
   }
-}
-
-/** Research an open-ended query */
-export async function researchQuery(query: string): Promise<ResearchResult> {
-  // Channel 2: Claude WebSearch (best for open-ended)
-  const claudeResult = claudeWebSearch(query);
-  if (claudeResult) {
-    logger.info(
-      { query: query.slice(0, 50), source: 'claude-websearch' },
-      'Research query',
-    );
-    return { content: claudeResult, source: 'claude-websearch' };
-  }
-
-  return {
-    content: '',
-    source: 'failed',
-  };
 }

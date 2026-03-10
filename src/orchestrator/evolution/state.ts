@@ -77,6 +77,18 @@ export interface EvolutionState {
   completedGoals?: string[];
   /** Past research topics for dedup (ring buffer, max 50) */
   pastResearchTopics?: string[];
+  /** Exploration map: domain → { searches, goalsQueued, goalsSucceeded, lastSearched } */
+  explorationMap?: Record<
+    string,
+    {
+      searches: number;
+      goalsQueued: number;
+      goalsSucceeded: number;
+      lastSearched: string;
+    }
+  >;
+  /** Index into the 4-strategy rotation (exploit/explore/serendipity/contrarian) */
+  researchStrategyIndex?: number;
 }
 
 // --- Constants ---

@@ -364,7 +364,10 @@ function recordCompletedGoal(state: EvolutionState, text: string): void {
 }
 
 /** Record a research topic for future dedup (ring buffer, max 50) */
-export function recordResearchTopic(state: EvolutionState, topic: string): void {
+export function recordResearchTopic(
+  state: EvolutionState,
+  topic: string,
+): void {
   if (!state.pastResearchTopics) state.pastResearchTopics = [];
   state.pastResearchTopics.push(normalizeForDedup(topic));
   if (state.pastResearchTopics.length > 50) {
@@ -388,7 +391,7 @@ export function addGoal(state: EvolutionState, text: string): void {
   state.userGoals.push({ text, addedAt: new Date().toISOString() });
 }
 
-/** Step 6: Research — MiniMax picks topics, Claude researches, MiniMax synthesizes */
+/** Step 6: Research — curiosity-driven exploration with strategy rotation */
 async function stepResearch(
   evoState: EvolutionState,
   apiKey: string,
@@ -399,14 +402,31 @@ async function stepResearch(
     : 0;
   if (Date.now() - lastResearch < 30 * 60_000) return null;
 
-  const action = createAction('research', 'Web research for SOTA techniques');
+  const strategyIndex = evoState.researchStrategyIndex || 0;
+  const strategies = ['exploit', 'explore', 'serendipity', 'contrarian'];
+  const strategyName = strategies[strategyIndex % strategies.length];
+
+  const action = createAction(
+    'research',
+    `Research [${strategyName}]: SOTA exploration`,
+  );
 
   try {
     updateAction(action, 'executing');
     evoState.lastResearch = new Date().toISOString();
 
     const pastTopics = evoState.pastResearchTopics || [];
-    const result = await runResearchCycle(apiKey, pastTopics);
+    if (!evoState.explorationMap) evoState.explorationMap = {};
+
+    const result = await runResearchCycle(
+      apiKey,
+      pastTopics,
+      evoState.explorationMap,
+      strategyIndex,
+    );
+
+    // Advance strategy rotation for next cycle
+    evoState.researchStrategyIndex = (strategyIndex + 1) % strategies.length;
 
     // Record topics for future dedup
     for (const topic of result.topics) {
@@ -415,7 +435,7 @@ async function stepResearch(
 
     if (result.actionItems.length === 0) {
       updateAction(action, 'committed', {
-        result: `Researched ${result.topics.length} topics, no actionable items`,
+        result: `[${strategyName}] ${result.topics.length} topics, no actionable items`,
       });
       return action;
     }
@@ -426,17 +446,20 @@ async function stepResearch(
     }
 
     updateAction(action, 'committed', {
-      result: `${result.topics.length} topics → ${result.actionItems.length} action items queued`,
+      result: `[${strategyName}] ${result.topics.length} topics → ${result.actionItems.length} goals (domains: ${result.domains.join(', ')})`,
     });
     recordSuccess(evoState);
 
+    const domainCount = Object.keys(evoState.explorationMap).length;
     await notify(
       [
-        `<b>🔬 Research Complete</b>`,
+        `<b>🔬 Research Complete</b> [<code>${strategyName}</code>]`,
         `<code>[${action.id}]</code>`,
         ``,
         `Topics: ${result.topics.map((t: string) => `<code>${t.slice(0, 60)}</code>`).join(', ')}`,
-        `Action items: <code>${result.actionItems.length}</code> queued as goals`,
+        `Domains: ${result.domains.map((d: string) => `<code>${d.slice(0, 40)}</code>`).join(', ')}`,
+        `Action items: <code>${result.actionItems.length}</code> queued`,
+        `Exploration: <code>${domainCount}</code> domains mapped`,
         ``,
         ...result.actionItems
           .slice(0, 3)
