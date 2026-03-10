@@ -9,48 +9,38 @@ export async function queryMiniMax(
   apiKey: string,
   systemPrompt = '',
 ): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60_000);
-
-  try {
-    const body: Record<string, unknown> = {
-      model: MINIMAX_MODEL,
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: prompt }],
-    };
-    if (systemPrompt) {
-      body.system = systemPrompt;
-    }
-
-    const response = await fetch(`${MINIMAX_BASE_URL}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2024-10-22',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timer);
-
-    if (!response.ok) {
-      const respBody = await response.text().catch(() => '');
-      throw new Error(
-        `MiniMax API ${response.status}: ${respBody.slice(0, 200)}`,
-      );
-    }
-
-    const data = (await response.json()) as {
-      content: Array<{ type: string; text?: string }>;
-    };
-    const textBlocks = data.content.filter((b) => b.type === 'text' && b.text);
-    return textBlocks.map((b) => b.text!).join('');
-  } catch (err) {
-    clearTimeout(timer);
-    throw err;
+  const body: Record<string, unknown> = {
+    model: MINIMAX_MODEL,
+    max_tokens: 4096,
+    messages: [{ role: 'user', content: prompt }],
+  };
+  if (systemPrompt) {
+    body.system = systemPrompt;
   }
+
+  const response = await fetch(`${MINIMAX_BASE_URL}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2024-10-22',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(60_000),
+  });
+
+  if (!response.ok) {
+    const respBody = await response.text().catch(() => '');
+    throw new Error(
+      `MiniMax API ${response.status}: ${respBody.slice(0, 200)}`,
+    );
+  }
+
+  const data = (await response.json()) as {
+    content: Array<{ type: string; text?: string }>;
+  };
+  const textBlocks = data.content.filter((b) => b.type === 'text' && b.text);
+  return textBlocks.map((b) => b.text!).join('');
 }
 
 /** Parse a MiniMax response into findings array */

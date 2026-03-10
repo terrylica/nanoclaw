@@ -28,17 +28,12 @@ export interface ResearchResult {
 
 async function firecrawlScrape(url: string): Promise<string | null> {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
-
     const encodedUrl = encodeURIComponent(url);
     const name = url.replace(/[^a-z0-9]/gi, '-').slice(0, 50);
     const response = await fetch(
       `${FIRECRAWL_URL}/scrape?url=${encodedUrl}&name=${name}`,
-      { signal: controller.signal },
+      { signal: AbortSignal.timeout(30_000) },
     );
-
-    clearTimeout(timer);
 
     if (!response.ok) return null;
     const text = await response.text();

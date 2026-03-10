@@ -65,9 +65,6 @@ export async function sendTelegramNotification(
 ): Promise<void> {
   const t0 = Date.now();
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
-
     const response = await fetch(
       `https://api.telegram.org/bot${botToken}/sendMessage`,
       {
@@ -80,11 +77,9 @@ export async function sendTelegramNotification(
           disable_notification: true,
           link_preview_options: { is_disabled: true },
         }),
-        signal: controller.signal,
+        signal: AbortSignal.timeout(30_000),
       },
     );
-
-    clearTimeout(timer);
     const durationMs = Date.now() - t0;
 
     if (!response.ok) {

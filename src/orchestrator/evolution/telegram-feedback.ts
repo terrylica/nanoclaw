@@ -83,6 +83,7 @@ export async function sendWithKeyboard(
           reply_markup: replyMarkup,
           disable_notification: true,
         }),
+        signal: AbortSignal.timeout(30_000),
       },
     );
 
@@ -111,6 +112,7 @@ async function answerCallback(callbackId: string, text: string): Promise<void> {
           callback_query_id: callbackId,
           text,
         }),
+        signal: AbortSignal.timeout(10_000),
       },
     );
   } catch {
@@ -177,9 +179,6 @@ export async function pollCallbacks(): Promise<void> {
   const offset = (evoState.lastTelegramUpdateId || 0) + 1;
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10_000);
-
     const response = await fetch(
       `https://api.telegram.org/bot${_botToken}/getUpdates`,
       {
@@ -191,11 +190,9 @@ export async function pollCallbacks(): Promise<void> {
           timeout: 5,
           allowed_updates: ['callback_query'],
         }),
-        signal: controller.signal,
+        signal: AbortSignal.timeout(15_000),
       },
     );
-
-    clearTimeout(timer);
 
     if (!response.ok) return;
 
