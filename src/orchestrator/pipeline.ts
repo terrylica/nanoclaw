@@ -42,7 +42,7 @@ export function loadFalsePositivePatterns(): string[] {
     logger.warn('Failed to load false positive patterns');
     notify(
       `<b>⚠️ FP Pattern DB</b>\n\nFailed to parse false-positive patterns file. Using empty pattern list.`,
-    ).catch(() => {});
+    ).catch((err: unknown) => { logger.warn({ err }, 'Telegram notification failed'); });
   }
   return [];
 }
@@ -72,7 +72,7 @@ export function syncFalsePositivePatterns(): void {
     logger.warn({ err }, 'Failed to sync false positive patterns');
     notify(
       `<b>⚠️ FP Pattern Sync Failed</b>\n\n<code>${escapeHtml(String(err).slice(0, 200))}</code>`,
-    ).catch(() => {});
+    ).catch((notifyErr: unknown) => { logger.warn({ err: notifyErr }, 'Telegram notification failed'); });
   }
 }
 
@@ -395,7 +395,7 @@ RULES:
       );
       notify(
         `<b>❌ Claude Validation Failed</b>\n\n<code>${escapeHtml(finding.title.slice(0, 80))}</code>\nExit: <code>${result.status}</code>\n<code>${escapeHtml(errMsg.slice(0, 150))}</code>`,
-      ).catch(() => {});
+      ).catch((notifyErr: unknown) => { logger.warn({ err: notifyErr }, 'Telegram notification failed'); });
       return null;
     }
 
@@ -421,7 +421,7 @@ RULES:
       );
       notify(
         `<b>❌ Claude JSON Parse Failed</b>\n\n<code>${escapeHtml(finding.title.slice(0, 80))}</code>\nResponse: <code>${escapeHtml(output.slice(0, 150))}</code>`,
-      ).catch(() => {});
+      ).catch((notifyErr: unknown) => { logger.warn({ err: notifyErr }, 'Telegram notification failed'); });
       return null;
     }
 
@@ -439,7 +439,7 @@ RULES:
       );
       notify(
         `<b>❌ Claude Validation Malformed</b>\n\n<code>${escapeHtml(finding.title.slice(0, 80))}</code>\nMissing required fields (confirmed/confidence/analysis).`,
-      ).catch(() => {});
+      ).catch((notifyErr: unknown) => { logger.warn({ err: notifyErr }, 'Telegram notification failed'); });
       return null;
     }
 
@@ -457,7 +457,7 @@ RULES:
     logger.error({ err, title: finding.title }, 'Claude validation error');
     notify(
       `<b>❌ Claude Validation Error</b>\n\n<code>${escapeHtml(finding.title.slice(0, 80))}</code>\n<code>${escapeHtml(String(err).slice(0, 150))}</code>`,
-    ).catch(() => {});
+    ).catch((notifyErr: unknown) => { logger.warn({ err: notifyErr }, 'Telegram notification failed'); });
     return null;
   }
 }
