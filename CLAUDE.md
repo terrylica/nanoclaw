@@ -18,8 +18,16 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/container-runner.ts` | Spawns agent containers with mounts |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | SQLite operations |
+| `src/group-queue.ts` | Per-group container concurrency: slot gating, task vs message priority, exponential backoff retry |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
+
+## Nested CLAUDE.md Files
+
+| Path | Scope |
+|------|-------|
+| [`src/orchestrator/CLAUDE.md`](src/orchestrator/CLAUDE.md) | Orchestrator loops: self-scan, issue triage, repo hygiene |
+| [`src/orchestrator/evolution/CLAUDE.md`](src/orchestrator/evolution/CLAUDE.md) | Autonomous self-improvement: goal queue, worktree execution, research |
 
 ## Skills
 

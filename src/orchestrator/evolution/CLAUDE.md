@@ -54,12 +54,12 @@ Gates run in order; any hard-fail aborts the merge.
 
 | Gate | Type | Check |
 |------|------|-------|
-| Protected file | Hard | Rejects changes to `engine.ts`, `validator.ts`, `state.ts`, `node_modules`, `bun.lock`, `package.json` |
-| Build | Hard | `tsc --noEmit` must pass (120s timeout) |
+| Protected file | Hard | Rejects changes to `engine.ts`, `validator.ts`, `state.ts`; also rejects `node_modules`, `bun.lock`, `package.json`, `.env` |
+| Build | Hard | `tsc --noEmit` must pass (120s timeout); auto-repairs `node_modules` if missing or symlinked before running tsc |
 | Test | Advisory | `bun test` (180s timeout, 157 pre-existing failures — non-blocking) |
 | MiniMax review | Soft | LLM diff review; fails open if MiniMax unavailable |
 
-Each gate returns `GateResult { gate, pass, detail, durationMs }`.
+Each gate returns `GateResult { gate, passed, detail, durationMs }`.
 
 ## Research Strategies (`research.ts`)
 
