@@ -173,17 +173,64 @@ ${researchContent}
 Return up to 5 specific, implementable action items. Each should be a single sentence describing what to change/add and why. One per line, no bullets or numbering.`;
 
   const synthesisResponse = await queryMiniMax(synthesisPrompt, apiKey);
-  const actionItems = synthesisResponse
+  const rawItems = synthesisResponse
     .trim()
     .split('\n')
     .filter((l: string) => l.trim().length > 20)
     .slice(0, 5);
 
+  // Step 4: Score each action item for relevance to NanoClaw's self-evolution
+  // Only queue items with relevance >= 0.7 to prevent speculative bloat
+  const actionItems: string[] = [];
+  for (const item of rawItems) {
+    const score = await scoreGoalRelevance(item, apiKey);
+    if (score >= 0.7) {
+      actionItems.push(item);
+      logger.debug(
+        { item: item.slice(0, 60), score },
+        'Research goal accepted',
+      );
+    } else {
+      logger.debug(
+        { item: item.slice(0, 60), score },
+        'Research goal rejected (low relevance)',
+      );
+    }
+  }
+
   logger.info(
-    { topics, actionCount: actionItems.length },
+    { topics, rawCount: rawItems.length, acceptedCount: actionItems.length },
     'Research cycle complete',
   );
   return { topics, actionItems };
+}
+
+/** Score a research goal for relevance to NanoClaw's self-evolution (0.0-1.0). */
+async function scoreGoalRelevance(
+  goalText: string,
+  apiKey: string,
+): Promise<number> {
+  try {
+    const { queryMiniMax } = await import('../minimax-client.js');
+    const prompt = `Score this proposed improvement for NanoClaw (a TypeScript autonomous code validation system) on a scale of 0.0 to 1.0.
+
+PROPOSED GOAL: ${goalText}
+
+SCORING CRITERIA:
+- 1.0: Directly improves NanoClaw's existing TypeScript source code (bug fix, type safety, error handling, performance)
+- 0.8: Enhances existing evolution/validation pipeline with minimal new code
+- 0.5: Requires significant new infrastructure or speculative design
+- 0.2: Tangentially related, mostly theoretical
+- 0.0: Irrelevant or would add unused code
+
+Respond with ONLY a number between 0.0 and 1.0, nothing else.`;
+
+    const response = await queryMiniMax(prompt, apiKey);
+    const score = parseFloat(response.trim());
+    return isNaN(score) ? 0 : Math.max(0, Math.min(1, score));
+  } catch {
+    return 0; // Fail closed — don't queue unscored goals
+  }
 }
 
 /** Research an open-ended query */

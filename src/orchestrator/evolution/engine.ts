@@ -15,7 +15,7 @@
  * PROTECTED: This file is never self-modifiable by the evolution engine.
  */
 import path from 'path';
-import { execSync, spawnSync } from 'child_process';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 import { logger } from '../../logger.js';
@@ -52,12 +52,6 @@ import { validateAction } from './validator.js';
 
 // --- Constants ---
 
-const CLAUDE_BIN = path.join(
-  process.env.HOME || '/Users/terryli',
-  '.local/bin/claude',
-);
-const GOAL_BUDGET_USD = 2.0;
-const GOAL_TIMEOUT_MS = 300_000; // 5 min
 const SELF_REPO = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../..',
@@ -309,261 +303,22 @@ Only report findings with confidence >= 4 and concrete code references.`;
   }
 }
 
-/** Step 5: Goal Execution — Claude Code implements queued fixes */
+/** Step 5: Goal Execution — delegates to goal-executor with worktree isolation */
 async function stepGoalExecution(
   evoState: EvolutionState,
+  apiKey: string,
 ): Promise<EvolutionAction | null> {
   const goals = evoState.userGoals || [];
   if (goals.length === 0) return null;
 
-  // Take the oldest goal
   const goal = goals[0];
-  const action = createAction('goal-fix', goal.text.slice(0, 100));
+  const { executeGoal } = await import('./goal-executor.js');
+  const result = await executeGoal(goal, evoState, apiKey);
 
-  try {
-    updateAction(action, 'executing');
+  // Remove goal from queue regardless of outcome
+  removeGoal(evoState, 0);
 
-    // CRITICAL: Stash any existing uncommitted changes before Claude Code runs.
-    // This ensures we only see the goal's changes in git status afterward.
-    let hasStash = false;
-    try {
-      const stashResult = execSync(
-        'git stash push -m "nanoclaw-goal-execution"',
-        {
-          cwd: SELF_REPO,
-          encoding: 'utf-8',
-          timeout: 30_000,
-        },
-      ).trim();
-      hasStash = !stashResult.includes('No local changes');
-    } catch {
-      // No changes to stash — that's fine
-    }
-
-    // Run Claude Code to implement the fix
-    const prompt = [
-      `You are fixing a code issue in NanoClaw, a TypeScript/Bun project.`,
-      ``,
-      `Issue: ${goal.text}`,
-      ``,
-      `Instructions:`,
-      `- Make the minimal change needed to fix this issue`,
-      `- Do NOT modify src/orchestrator/evolution/engine.ts or src/orchestrator/evolution/validator.ts (protected files)`,
-      `- Ensure the fix compiles (TypeScript strict mode)`,
-      `- If the issue is already fixed or not applicable, make no changes`,
-    ].join('\n');
-
-    const result = spawnSync(
-      CLAUDE_BIN,
-      [
-        '-p',
-        '--allowedTools',
-        'Read,Edit,Write,Bash,Glob,Grep',
-        '--max-budget-usd',
-        String(GOAL_BUDGET_USD),
-        '--output-format',
-        'text',
-      ],
-      {
-        input: prompt,
-        cwd: SELF_REPO,
-        encoding: 'utf-8',
-        timeout: GOAL_TIMEOUT_MS,
-        maxBuffer: 4 * 1024 * 1024,
-      },
-    );
-
-    const output = (result.stdout || '').trim();
-    const hadError = result.error || result.status !== 0;
-
-    logger.info(
-      { goalText: goal.text.slice(0, 60), outputLen: output.length, hadError },
-      'Goal execution complete',
-    );
-
-    // Check what files were changed (only new changes since stash)
-    // Use git diff --name-only for modified files + ls-files for untracked
-    let changedFiles: string[] = [];
-    try {
-      const modified = execSync('git diff --name-only', {
-        cwd: SELF_REPO,
-        encoding: 'utf-8',
-        timeout: 10_000,
-      }).trim();
-      const untracked = execSync('git ls-files --others --exclude-standard', {
-        cwd: SELF_REPO,
-        encoding: 'utf-8',
-        timeout: 10_000,
-      }).trim();
-      changedFiles = [...modified.split('\n'), ...untracked.split('\n')]
-        .map((f) => f.trim())
-        .filter((f) => f.length > 0);
-    } catch {
-      // git diff failed
-    }
-
-    if (changedFiles.length === 0) {
-      // No changes — goal was already fixed or not applicable
-      updateAction(action, 'committed', {
-        result: `No changes needed: ${output.slice(0, 200)}`,
-      });
-      removeGoal(evoState, 0);
-      recordSuccess(evoState);
-
-      // Restore stashed changes — drop if conflict
-      if (hasStash) {
-        try {
-          execSync('git stash pop', {
-            cwd: SELF_REPO,
-            encoding: 'utf-8',
-            timeout: 30_000,
-          });
-        } catch {
-          try {
-            execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 });
-          } catch {
-            /* */
-          }
-        }
-      }
-      return action;
-    }
-
-    // Validate: build must pass
-    try {
-      execSync('bun run build', {
-        cwd: SELF_REPO,
-        encoding: 'utf-8',
-        timeout: 120_000,
-      });
-    } catch (buildErr) {
-      logger.warn(
-        { err: buildErr, files: changedFiles },
-        'Goal fix failed build — reverting',
-      );
-      // Revert only the goal's changes (not stashed changes)
-      for (const file of changedFiles) {
-        try {
-          execSync(`git checkout -- "${file}"`, {
-            cwd: SELF_REPO,
-            timeout: 10_000,
-          });
-        } catch {
-          /* ignore */
-        }
-      }
-      updateAction(action, 'failed', { result: 'Build failed after fix' });
-      removeGoal(evoState, 0);
-
-      if (hasStash) {
-        try {
-          execSync('git stash pop', {
-            cwd: SELF_REPO,
-            encoding: 'utf-8',
-            timeout: 30_000,
-          });
-        } catch {
-          try {
-            execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 });
-          } catch {
-            /* */
-          }
-          try {
-            execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 });
-          } catch {
-            /* */
-          }
-        }
-      }
-      return action;
-    }
-
-    // Commit the fix
-    const hash = commitEvolution(action, changedFiles, SELF_REPO);
-
-    if (hash) {
-      updateAction(action, 'committed', {
-        commitHash: hash,
-        result: `Fixed: ${output.slice(0, 200)}`,
-      });
-      recordSuccess(evoState);
-
-      await notify(
-        [
-          `<b>🔧 Goal Fix Committed</b>`,
-          `<code>[${action.id}]</code>`,
-          ``,
-          `<i>${goal.text.slice(0, 200)}</i>`,
-          ``,
-          `Commit: <code>${hash.slice(0, 7)}</code>`,
-          `Files: ${changedFiles.map((f) => `<code>${f}</code>`).join(', ')}`,
-        ].join('\n'),
-      );
-    } else {
-      updateAction(action, 'failed', { result: 'Git commit failed' });
-      // Revert goal's changes
-      for (const file of changedFiles) {
-        try {
-          execSync(`git checkout -- "${file}"`, {
-            cwd: SELF_REPO,
-            timeout: 10_000,
-          });
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-
-    removeGoal(evoState, 0);
-
-    // Restore stashed changes — if pop fails (conflict), drop stale stash + clean tree
-    if (hasStash) {
-      try {
-        execSync('git stash pop', {
-          cwd: SELF_REPO,
-          encoding: 'utf-8',
-          timeout: 30_000,
-        });
-      } catch {
-        logger.warn('Stash pop conflict after goal — dropping stale stash');
-        try {
-          execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 });
-        } catch {
-          /* */
-        }
-        try {
-          execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 });
-        } catch {
-          /* */
-        }
-      }
-    }
-
-    return action;
-  } catch (err) {
-    updateAction(action, 'failed', { result: String(err).slice(0, 200) });
-    removeGoal(evoState, 0);
-    // Try to restore stash — drop if conflict
-    try {
-      execSync('git stash pop', {
-        cwd: SELF_REPO,
-        encoding: 'utf-8',
-        timeout: 30_000,
-      });
-    } catch {
-      try {
-        execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 });
-      } catch {
-        /* */
-      }
-      try {
-        execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 });
-      } catch {
-        /* */
-      }
-    }
-    return null;
-  }
+  return result.action;
 }
 
 /** Remove a goal from the queue by index */
@@ -652,6 +407,15 @@ async function stepRepoHygiene(
   let stashesDropped = 0;
   let filesCleaned = 0;
   let commitsPushed = 0;
+  let worktreesCleaned = 0;
+
+  // 0. Clean up stale goal worktrees (crash recovery)
+  try {
+    const { cleanupStaleWorktrees } = await import('./goal-worktree.js');
+    worktreesCleaned = cleanupStaleWorktrees(SELF_REPO);
+  } catch {
+    /* */
+  }
 
   // 1. Drop all nanoclaw-goal-execution stashes (stale from failed pops)
   try {
@@ -737,8 +501,12 @@ async function stepRepoHygiene(
   }
 
   // Only report if we actually did something
-  if (stashesDropped > 0 || filesCleaned > 0 || commitsPushed > 0) {
+  const didWork =
+    stashesDropped > 0 || filesCleaned > 0 || commitsPushed > 0 || worktreesCleaned > 0;
+  if (didWork) {
     const parts: string[] = [];
+    if (worktreesCleaned > 0)
+      parts.push(`${worktreesCleaned} stale worktrees cleaned`);
     if (stashesDropped > 0)
       parts.push(`${stashesDropped} stale stashes dropped`);
     if (filesCleaned > 0) parts.push(`${filesCleaned} dirty files cleaned`);
@@ -803,7 +571,7 @@ export async function tick(
 
   const steps = [
     // Step 1: Goal execution — highest priority, implement queued fixes
-    async () => stepGoalExecution(evoState),
+    async () => stepGoalExecution(evoState, apiKey),
 
     // Step 2: Self-scan (every 5 min) — discovers issues, queues as goals
     async () => stepSelfScan(evoState),
