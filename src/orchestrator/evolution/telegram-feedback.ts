@@ -134,41 +134,41 @@ function processCallback(
   switch (action) {
     case 'tp':
       recordResult(id, true);
-      answerCallback(query.id, 'Recorded as True Positive').catch(() => {});
+      answerCallback(query.id, 'Recorded as True Positive').catch((err: unknown) => { logger.warn({ err }, 'Failed to answer callback query'); });
       logger.info({ findingId: id }, 'Finding marked as TP via Telegram');
       break;
 
     case 'fp':
       recordResult(id, false);
-      answerCallback(query.id, 'Marked as False Positive').catch(() => {});
+      answerCallback(query.id, 'Marked as False Positive').catch((err: unknown) => { logger.warn({ err }, 'Failed to answer callback query'); });
       logger.info({ findingId: id }, 'Finding marked as FP via Telegram');
       break;
 
     case 'dismiss':
-      answerCallback(query.id, 'Dismissed').catch(() => {});
+      answerCallback(query.id, 'Dismissed').catch((err: unknown) => { logger.warn({ err }, 'Failed to answer callback query'); });
       logger.info({ findingId: id }, 'Finding dismissed via Telegram');
       break;
 
     case 'approve':
       if (_approvalCallback) _approvalCallback(id, true);
-      answerCallback(query.id, 'Approved').catch(() => {});
+      answerCallback(query.id, 'Approved').catch((err: unknown) => { logger.warn({ err }, 'Failed to answer callback query'); });
       logger.info({ actionId: id }, 'Evolution action approved via Telegram');
       break;
 
     case 'reject':
       if (_approvalCallback) _approvalCallback(id, false);
-      answerCallback(query.id, 'Rejected').catch(() => {});
+      answerCallback(query.id, 'Rejected').catch((err: unknown) => { logger.warn({ err }, 'Failed to answer callback query'); });
       logger.info({ actionId: id }, 'Evolution action rejected via Telegram');
       break;
 
     case 'details':
       answerCallback(query.id, 'Details requested — check next message').catch(
-        () => {},
+        (err: unknown) => { logger.warn({ err }, 'Failed to answer callback query'); },
       );
       break;
 
     default:
-      answerCallback(query.id, 'Unknown action').catch(() => {});
+      answerCallback(query.id, 'Unknown action').catch((err: unknown) => { logger.warn({ err }, 'Failed to answer callback query'); });
   }
 }
 
