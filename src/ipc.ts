@@ -187,7 +187,11 @@ export async function processTaskIpc(
         data.targetJid
       ) {
         // Resolve the target group from JID
-        const targetJid = data.targetJid as string;
+        if (typeof data.targetJid !== 'string') {
+          logger.warn({ targetJid: data.targetJid }, 'Invalid IPC payload: targetJid must be a string');
+          break;
+        }
+        const targetJid = data.targetJid;
         const targetGroupEntry = registeredGroups[targetJid];
 
         if (!targetGroupEntry) {
