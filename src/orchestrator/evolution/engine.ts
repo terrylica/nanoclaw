@@ -413,9 +413,17 @@ async function stepGoalExecution(
       // Restore stashed changes — drop if conflict
       if (hasStash) {
         try {
-          execSync('git stash pop', { cwd: SELF_REPO, encoding: 'utf-8', timeout: 30_000 });
+          execSync('git stash pop', {
+            cwd: SELF_REPO,
+            encoding: 'utf-8',
+            timeout: 30_000,
+          });
         } catch {
-          try { execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
+          try {
+            execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 });
+          } catch {
+            /* */
+          }
         }
       }
       return action;
@@ -449,10 +457,22 @@ async function stepGoalExecution(
 
       if (hasStash) {
         try {
-          execSync('git stash pop', { cwd: SELF_REPO, encoding: 'utf-8', timeout: 30_000 });
+          execSync('git stash pop', {
+            cwd: SELF_REPO,
+            encoding: 'utf-8',
+            timeout: 30_000,
+          });
         } catch {
-          try { execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
-          try { execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
+          try {
+            execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 });
+          } catch {
+            /* */
+          }
+          try {
+            execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 });
+          } catch {
+            /* */
+          }
         }
       }
       return action;
@@ -499,11 +519,23 @@ async function stepGoalExecution(
     // Restore stashed changes — if pop fails (conflict), drop stale stash + clean tree
     if (hasStash) {
       try {
-        execSync('git stash pop', { cwd: SELF_REPO, encoding: 'utf-8', timeout: 30_000 });
+        execSync('git stash pop', {
+          cwd: SELF_REPO,
+          encoding: 'utf-8',
+          timeout: 30_000,
+        });
       } catch {
         logger.warn('Stash pop conflict after goal — dropping stale stash');
-        try { execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
-        try { execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
+        try {
+          execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 });
+        } catch {
+          /* */
+        }
+        try {
+          execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 });
+        } catch {
+          /* */
+        }
       }
     }
 
@@ -513,10 +545,22 @@ async function stepGoalExecution(
     removeGoal(evoState, 0);
     // Try to restore stash — drop if conflict
     try {
-      execSync('git stash pop', { cwd: SELF_REPO, encoding: 'utf-8', timeout: 30_000 });
+      execSync('git stash pop', {
+        cwd: SELF_REPO,
+        encoding: 'utf-8',
+        timeout: 30_000,
+      });
     } catch {
-      try { execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
-      try { execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
+      try {
+        execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 });
+      } catch {
+        /* */
+      }
+      try {
+        execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 });
+      } catch {
+        /* */
+      }
     }
     return null;
   }
@@ -630,11 +674,15 @@ async function stepRepoHygiene(
               timeout: 10_000,
             });
             stashesDropped++;
-          } catch { /* */ }
+          } catch {
+            /* */
+          }
         }
       }
     }
-  } catch { /* */ }
+  } catch {
+    /* */
+  }
 
   // 2. Reset dirty working tree (discard uncommitted changes — they're stale goal residue)
   try {
@@ -647,20 +695,25 @@ async function stepRepoHygiene(
       filesCleaned = dirty.split('\n').length;
       execSync('git checkout .', { cwd: SELF_REPO, timeout: 30_000 });
       // Also remove untracked files from failed goals
-      const untracked = execSync(
-        'git ls-files --others --exclude-standard',
-        { cwd: SELF_REPO, encoding: 'utf-8', timeout: 10_000 },
-      ).trim();
+      const untracked = execSync('git ls-files --others --exclude-standard', {
+        cwd: SELF_REPO,
+        encoding: 'utf-8',
+        timeout: 10_000,
+      }).trim();
       if (untracked) {
         for (const f of untracked.split('\n').filter(Boolean)) {
           try {
             execSync(`rm -f "${f}"`, { cwd: SELF_REPO, timeout: 5_000 });
-          } catch { /* */ }
+          } catch {
+            /* */
+          }
         }
         filesCleaned += untracked.split('\n').filter(Boolean).length;
       }
     }
-  } catch { /* */ }
+  } catch {
+    /* */
+  }
 
   // 3. Push to remote if 5+ commits ahead
   try {
@@ -686,18 +739,18 @@ async function stepRepoHygiene(
   // Only report if we actually did something
   if (stashesDropped > 0 || filesCleaned > 0 || commitsPushed > 0) {
     const parts: string[] = [];
-    if (stashesDropped > 0) parts.push(`${stashesDropped} stale stashes dropped`);
+    if (stashesDropped > 0)
+      parts.push(`${stashesDropped} stale stashes dropped`);
     if (filesCleaned > 0) parts.push(`${filesCleaned} dirty files cleaned`);
     if (commitsPushed > 0) parts.push(`${commitsPushed} commits pushed`);
 
-    logger.info({ stashesDropped, filesCleaned, commitsPushed }, 'Repo hygiene complete');
+    logger.info(
+      { stashesDropped, filesCleaned, commitsPushed },
+      'Repo hygiene complete',
+    );
 
     await notify(
-      [
-        `<b>🧹 Repo Hygiene</b>`,
-        ``,
-        ...parts.map((p) => `• ${p}`),
-      ].join('\n'),
+      [`<b>🧹 Repo Hygiene</b>`, ``, ...parts.map((p) => `• ${p}`)].join('\n'),
     );
   }
 
