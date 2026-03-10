@@ -90,12 +90,19 @@ async function stepIssueLandscape(
   }
 }
 
-/** Step 2: Prompt Refinement */
+/** Step 2: Prompt Refinement — only runs when prompts have enough usage data */
 async function stepPromptRefinement(
   config: OrchestratorConfig,
   evoState: EvolutionState,
   apiKey: string,
 ): Promise<EvolutionAction | null> {
+  // Gate: skip if no prompts have 5+ uses (avoids 100% failure thrashing)
+  const metrics = getMetrics();
+  const hasData = metrics.some(
+    (m: { uses: number }) => m.uses >= 5,
+  );
+  if (!hasData) return null;
+
   const action = createAction(
     'prompt-refine',
     'Evolve worst-performing prompt',
