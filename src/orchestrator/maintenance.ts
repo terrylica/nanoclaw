@@ -6,6 +6,8 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR } from '../config.js';
+
+const CLAUDE_BIN = path.join(process.env.HOME || '/Users/terryli', '.local/bin/claude');
 import { logger } from '../logger.js';
 import { setCcSkillsContent } from './github-issues.js';
 import { getTargetRepo } from './pipeline.js';
@@ -124,7 +126,7 @@ export async function runClaudeMdMaintenance(
 
   try {
     const result = spawnSync(
-      'claude',
+      CLAUDE_BIN,
       [
         '-p',
         '--output-format',

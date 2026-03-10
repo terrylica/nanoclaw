@@ -7,6 +7,8 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR } from '../config.js';
+
+const CLAUDE_BIN = path.join(process.env.HOME || '/Users/terryli', '.local/bin/claude');
 import { logger } from '../logger.js';
 import { getPrompt } from './evolution/prompt-registry.js';
 import { readRepoFile } from './git-ops.js';
@@ -119,7 +121,9 @@ Be skeptical. A finding is only valid if you can see the actual problem in the s
 JSON:`;
 
   const consensusEntry = getPrompt('consensus-round');
-  const consensusSystem = consensusEntry?.systemPrompt ?? `You are a senior engineer at a financial data company reviewing automated code analysis findings. Your job is to AGGRESSIVELY eliminate false positives by cross-referencing findings against the actual source code.
+  const consensusSystem =
+    consensusEntry?.systemPrompt ??
+    `You are a senior engineer at a financial data company reviewing automated code analysis findings. Your job is to AGGRESSIVELY eliminate false positives by cross-referencing findings against the actual source code.
 
 COMMON FALSE POSITIVE PATTERNS TO CHECK:
 1. "Silent catch/pass" in best-effort utility code — if the function is optional/fallback, silent failure is correct
@@ -203,7 +207,9 @@ If you can disprove ALL findings, respond with: []
 JSON:`;
 
   const advocateEntry = getPrompt('devils-advocate');
-  const advocateSystem = advocateEntry?.systemPrompt ?? `You are a code defense attorney. Your expertise is finding legitimate reasons why code that LOOKS problematic is actually correct. You know that:
+  const advocateSystem =
+    advocateEntry?.systemPrompt ??
+    `You are a code defense attorney. Your expertise is finding legitimate reasons why code that LOOKS problematic is actually correct. You know that:
 - Best-effort utilities (allocator hints, cache warmup) should fail silently
 - Stateless loops are often better than stateful ones (freshness re-evaluation)
 - Platform guards make certain error paths unreachable
@@ -368,7 +374,7 @@ RULES:
       'Validating finding with Claude',
     );
 
-    const result = spawnSync('claude', ['-p', '--output-format', 'text'], {
+    const result = spawnSync(CLAUDE_BIN, ['-p', '--output-format', 'text'], {
       input: prompt,
       cwd: repoPath,
       encoding: 'utf-8',
