@@ -17,10 +17,8 @@ import {
   sendTelegramNotification,
   formatFindingNotification,
 } from './telegram.js';
-import { suggestLabels } from './github-issues.js';
-import { createGitHubIssue } from './github-issues.js';
+import { suggestLabels, createGitHubIssue, issueExistsFuzzy } from './github-issues.js';
 import { saveState, checkRateLimit } from './state.js';
-import { issueExistsFuzzy } from './github-issues.js';
 import {
   ALGO_SCAN_INTERVAL_MS,
   PROACTIVE_SCAN_INTERVAL_MS,
