@@ -132,7 +132,10 @@ export function loadEvolutionState(): EvolutionState {
 export function saveEvolutionState(state: EvolutionState): void {
   try {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    // Atomic write: tmp file + rename to prevent corruption on crash
+    const tmpFile = STATE_FILE + '.tmp';
+    fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2));
+    fs.renameSync(tmpFile, STATE_FILE);
   } catch (err) {
     logger.warn({ err }, 'Failed to save evolution state');
   }

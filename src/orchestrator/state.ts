@@ -36,7 +36,10 @@ export function loadState(): OrchestratorState {
 
 export function saveState(state: OrchestratorState): void {
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  // Atomic write: tmp file + rename to prevent corruption on crash
+  const tmpFile = STATE_FILE + '.tmp';
+  fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2));
+  fs.renameSync(tmpFile, STATE_FILE);
 }
 
 // --- Log Rotation ---
