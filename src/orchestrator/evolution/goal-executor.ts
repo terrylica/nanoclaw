@@ -166,11 +166,10 @@ export async function executeGoal(
     result.hadChanges = changedFiles.length > 0;
 
     if (changedFiles.length === 0) {
-      updateAction(action, 'committed', {
-        result: `No changes needed: ${claudeOutput.slice(0, 200)}`,
+      updateAction(action, 'failed', {
+        result: `Already fixed / no changes needed: ${claudeOutput.slice(0, 200)}`,
       });
-      recordSuccess(evoState);
-      logger.info({ goalId: action.id }, 'Goal produced no changes');
+      logger.info({ goalId: action.id }, 'Goal produced no changes — marking as already fixed');
       return result;
     }
 

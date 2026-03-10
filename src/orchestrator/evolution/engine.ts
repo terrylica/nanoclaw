@@ -228,6 +228,14 @@ async function stepSelfScan(
       '.local/bin/claude',
     );
 
+    // Build context of already-addressed goals so self-scan doesn't rediscover them
+    const completedGoals = (evoState.completedGoals || []).slice(-20);
+    const queuedGoals = (evoState.userGoals || []).map((g: UserGoal) => g.text.slice(0, 80));
+    const skipSection =
+      completedGoals.length > 0 || queuedGoals.length > 0
+        ? `\nDO NOT report issues that match these (already addressed or queued):\n${[...completedGoals, ...queuedGoals].map((g) => `- ${g}`).join('\n')}\n`
+        : '';
+
     const prompt = `You are scanning NanoClaw's own TypeScript source for improvements.
 NanoClaw is an autonomous self-evolving code validation orchestrator.
 
@@ -237,8 +245,8 @@ Focus on:
 3. Type safety: any casts, missing type guards, unsafe assertions
 4. Performance: blocking operations in async loops, unnecessary allocations
 5. Logic bugs: race conditions, stale state, off-by-one errors
-
-Scan the src/ directory. Only report findings with high confidence and concrete file:line references.
+${skipSection}
+Scan the src/ directory. Only report NOVEL findings with high confidence and concrete file:line references.
 
 Output EXACTLY a JSON array (no markdown fences). Each finding:
 {"type":"bug"|"enhancement"|"performance","severity":"critical"|"high"|"medium","confidence":1-5,"title":"...","description":"...","files":["..."]}
