@@ -81,6 +81,7 @@ export function runBuildGate(cwd: string): GateResult {
       encoding: 'utf-8',
       timeout: 120_000,
       stdio: 'pipe',
+      env: { ...process.env, MISE_NO_CONFIG: '1' },
     });
     return {
       gate: 'build',
@@ -108,6 +109,7 @@ export function runTestGate(cwd: string): GateResult {
       encoding: 'utf-8',
       timeout: 180_000,
       stdio: 'pipe',
+      env: { ...process.env, MISE_NO_CONFIG: '1' },
     });
     // Check for test failures in output
     if (result.includes('fail') && result.includes('0 pass')) {
