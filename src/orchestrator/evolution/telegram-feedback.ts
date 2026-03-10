@@ -5,6 +5,7 @@
  * Processes TP/FP button presses and approval/rejection flows.
  */
 import { logger } from '../../logger.js';
+import { fetchWithTimeout } from '../minimax-client.js';
 import { recordResult } from './prompt-registry.js';
 import { loadEvolutionState, saveEvolutionState } from './state.js';
 
@@ -71,7 +72,7 @@ export async function sendWithKeyboard(
   if (!_botToken) return null;
 
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `https://api.telegram.org/bot${_botToken}/sendMessage`,
       {
         method: 'POST',
@@ -83,8 +84,8 @@ export async function sendWithKeyboard(
           reply_markup: replyMarkup,
           disable_notification: true,
         }),
-        signal: AbortSignal.timeout(30_000),
       },
+      30_000,
     );
 
     if (!response.ok) return null;
@@ -103,7 +104,7 @@ async function answerCallback(callbackId: string, text: string): Promise<void> {
   if (!_botToken) return;
 
   try {
-    await fetch(
+    await fetchWithTimeout(
       `https://api.telegram.org/bot${_botToken}/answerCallbackQuery`,
       {
         method: 'POST',
@@ -112,8 +113,8 @@ async function answerCallback(callbackId: string, text: string): Promise<void> {
           callback_query_id: callbackId,
           text,
         }),
-        signal: AbortSignal.timeout(10_000),
       },
+      10_000,
     );
   } catch {
     // Non-fatal
@@ -179,7 +180,7 @@ export async function pollCallbacks(): Promise<void> {
   const offset = (evoState.lastTelegramUpdateId || 0) + 1;
 
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `https://api.telegram.org/bot${_botToken}/getUpdates`,
       {
         method: 'POST',
@@ -190,8 +191,8 @@ export async function pollCallbacks(): Promise<void> {
           timeout: 5,
           allowed_updates: ['callback_query'],
         }),
-        signal: AbortSignal.timeout(15_000),
       },
+      15_000,
     );
 
     if (!response.ok) return;

@@ -6,6 +6,7 @@ import path from 'path';
 
 import { DATA_DIR } from '../config.js';
 import { logger } from '../logger.js';
+import { fetchWithTimeout } from './minimax-client.js';
 import type { Finding, OrchestratorState, ValidationResult } from './types.js';
 
 // --- Global Notifier Singleton ---
@@ -65,7 +66,7 @@ export async function sendTelegramNotification(
 ): Promise<void> {
   const t0 = Date.now();
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `https://api.telegram.org/bot${botToken}/sendMessage`,
       {
         method: 'POST',
@@ -77,8 +78,8 @@ export async function sendTelegramNotification(
           disable_notification: true,
           link_preview_options: { is_disabled: true },
         }),
-        signal: AbortSignal.timeout(30_000),
       },
+      30_000,
     );
     const durationMs = Date.now() - t0;
 

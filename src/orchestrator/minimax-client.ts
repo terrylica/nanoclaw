@@ -1,8 +1,38 @@
 /**
  * MiniMax API client: query and response parsing.
  */
+import { logger } from '../logger.js';
 import { MINIMAX_BASE_URL, MINIMAX_MODEL } from './types.js';
 import type { Finding } from './types.js';
+
+/**
+ * fetch with a hard timeout via Promise.race.
+ * AbortSignal.timeout() and AbortController don't reliably abort TLS reads
+ * under macOS launchd, so we race against a rejection timer instead.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(
+      () => reject(new Error(`fetchWithTimeout: ${timeoutMs}ms exceeded`)),
+      timeoutMs,
+    ),
+  );
+
+  try {
+    return await Promise.race([
+      fetch(url, { ...init, signal: controller.signal }),
+      timeoutPromise,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export async function queryMiniMax(
   prompt: string,
@@ -18,16 +48,21 @@ export async function queryMiniMax(
     body.system = systemPrompt;
   }
 
-  const response = await fetch(`${MINIMAX_BASE_URL}/v1/messages`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2024-10-22',
+  logger.debug('MiniMax API call starting');
+  const response = await fetchWithTimeout(
+    `${MINIMAX_BASE_URL}/v1/messages`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2024-10-22',
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
+    60_000,
+  );
+  logger.debug('MiniMax API response received');
 
   if (!response.ok) {
     const respBody = await response.text().catch(() => '');

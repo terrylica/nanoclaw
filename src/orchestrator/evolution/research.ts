@@ -28,11 +28,13 @@ export interface ResearchResult {
 
 async function firecrawlScrape(url: string): Promise<string | null> {
   try {
+    const { fetchWithTimeout } = await import('../minimax-client.js');
     const encodedUrl = encodeURIComponent(url);
     const name = url.replace(/[^a-z0-9]/gi, '-').slice(0, 50);
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${FIRECRAWL_URL}/scrape?url=${encodedUrl}&name=${name}`,
-      { signal: AbortSignal.timeout(30_000) },
+      {},
+      30_000,
     );
 
     if (!response.ok) return null;
