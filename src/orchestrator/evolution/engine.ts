@@ -15,12 +15,11 @@
  * PROTECTED: This file is never self-modifiable by the evolution engine.
  */
 import path from 'path';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 import { logger } from '../../logger.js';
 import { queryMiniMax } from '../minimax-client.js';
-import { runAgenticSweep } from '../scanning.js';
 import type { OrchestratorConfig, OrchestratorState } from '../types.js';
 import { notify } from '../telegram.js';
 import { commitEvolution } from './git-safety.js';
@@ -209,64 +208,101 @@ async function stepRuleExpansion(
   }
 }
 
-/** Step 4: Self-Scan — Pi-powered agentic sweep of NanoClaw's own source */
+/** Step 4: Self-Scan — Claude Code scans NanoClaw's own source for improvements */
 async function stepSelfScan(
   evoState: EvolutionState,
 ): Promise<EvolutionAction | null> {
-  // Self-scan every 5 minutes
+  // Self-scan every 2 minutes — keep discovering issues continuously
   const lastSelfScan = evoState.lastSelfScan
     ? new Date(evoState.lastSelfScan).getTime()
     : 0;
-  if (Date.now() - lastSelfScan < 5 * 60_000) return null; // 5 minutes
+  if (Date.now() - lastSelfScan < 2 * 60_000) return null;
 
-  const action = createAction(
-    'self-scan',
-    'Pi-powered agentic sweep of NanoClaw src/',
-  );
+  const action = createAction('self-scan', 'Claude Code scan of NanoClaw src/');
 
   try {
     updateAction(action, 'executing');
 
-    // NanoClaw's own repo root — engine.ts is at src/orchestrator/evolution/
-    const selfRepoPath = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      '../../..',
+    const claudeBin = path.join(
+      process.env.HOME || '/Users/terryli',
+      '.local/bin/claude',
     );
 
-    const selfScanPrompt = `You are scanning NanoClaw's own TypeScript source code for improvements.
-NanoClaw is an autonomous code validation orchestrator. Focus on:
+    const prompt = `You are scanning NanoClaw's own TypeScript source for improvements.
+NanoClaw is an autonomous self-evolving code validation orchestrator.
 
-1. **Dead code**: unused imports, unreachable branches, exported-but-uncalled functions
-2. **Error handling gaps**: unhandled promise rejections, missing catch blocks
-3. **Type safety**: any casts, missing type guards, unsafe assertions
-4. **Performance**: blocking operations in async loops, unnecessary allocations
-5. **Logic bugs**: race conditions, stale state, off-by-one errors
+Focus on:
+1. Dead code: unused imports, unreachable branches, exported-but-uncalled functions
+2. Error handling gaps: unhandled promise rejections, missing catch blocks
+3. Type safety: any casts, missing type guards, unsafe assertions
+4. Performance: blocking operations in async loops, unnecessary allocations
+5. Logic bugs: race conditions, stale state, off-by-one errors
 
-Only report findings with confidence >= 4 and concrete code references.`;
+Scan the src/ directory. Only report findings with high confidence and concrete file:line references.
 
-    const result = await runAgenticSweep(
-      selfRepoPath,
-      selfScanPrompt,
-      'self-improvement',
+Output EXACTLY a JSON array (no markdown fences). Each finding:
+{"type":"bug"|"enhancement"|"performance","severity":"critical"|"high"|"medium","confidence":1-5,"title":"...","description":"...","files":["..."]}
+
+If no issues found, output: []`;
+
+    const claudeResult = spawnSync(
+      claudeBin,
+      [
+        '-p',
+        '--allowedTools',
+        'Read,Glob,Grep',
+        '--max-budget-usd',
+        '1.00',
+        '--output-format',
+        'text',
+      ],
+      {
+        input: prompt,
+        cwd: SELF_REPO,
+        encoding: 'utf-8',
+        timeout: 180_000,
+        maxBuffer: 4 * 1024 * 1024,
+      },
     );
 
     evoState.lastSelfScan = new Date().toISOString();
+    const output = (claudeResult.stdout || '').trim();
 
-    if (result.findings.length === 0) {
+    // Parse JSON findings from Claude's output
+    let findings: Array<{
+      type?: string;
+      severity?: string;
+      confidence?: number;
+      title?: string;
+      description?: string;
+      files?: string[];
+    }> = [];
+    try {
+      const jsonMatch = output.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        findings = JSON.parse(jsonMatch[0]);
+        findings = findings.filter(
+          (f) => typeof f.confidence === 'number' && f.confidence >= 4,
+        );
+      }
+    } catch {
+      /* output wasn't parseable JSON — treat as no findings */
+    }
+
+    if (findings.length === 0) {
       updateAction(action, 'committed', {
-        result: `Scanned ${result.totalFiles} files in ${result.turns} turns — no issues found`,
+        result: 'Self-scan complete — no high-confidence issues found',
       });
       recordSuccess(evoState);
       return action;
     }
 
     updateAction(action, 'committed', {
-      result: `Found ${result.findings.length} issue(s) in ${result.totalFiles} files (${result.turns} turns)`,
+      result: `Found ${findings.length} issue(s) via Claude Code self-scan`,
     });
     recordSuccess(evoState);
 
-    // Queue findings as goals for autonomous execution
-    for (const f of result.findings.slice(0, 5)) {
+    for (const f of findings.slice(0, 5)) {
       const goalText = [
         f.title || 'untitled',
         f.description ? `: ${f.description}` : '',
@@ -275,12 +311,11 @@ Only report findings with confidence >= 4 and concrete code references.`;
       addGoal(evoState, goalText.slice(0, 500));
     }
 
-    // Notify findings via Telegram
-    const findingsSummary = result.findings
+    const findingsSummary = findings
       .slice(0, 5)
       .map(
         (f) =>
-          `• <code>${f.title?.slice(0, 80) || 'untitled'}</code> [${f.severity}]`,
+          `• <code>${(f.title || 'untitled').slice(0, 80)}</code> [${f.severity || '?'}]`,
       )
       .join('\n');
 
@@ -288,16 +323,13 @@ Only report findings with confidence >= 4 and concrete code references.`;
       [
         `<b>🔬 NanoClaw Self-Scan Complete</b>`,
         ``,
-        `Scanned <code>${result.totalFiles}</code> files in <code>${result.turns}</code> turns`,
-        `Found <code>${result.findings.length}</code> issue(s) → queued as goals:`,
+        `Found <code>${findings.length}</code> issue(s) → queued as goals:`,
         findingsSummary,
       ].join('\n'),
     );
 
     return action;
   } catch (err) {
-    // Still set lastSelfScan on failure to prevent tight retry loops
-    // (e.g. missing Pi SDK packages cause immediate import failure)
     evoState.lastSelfScan = new Date().toISOString();
     updateAction(action, 'failed', {
       result: String(err).slice(0, 200),
@@ -399,11 +431,11 @@ async function stepResearch(
   evoState: EvolutionState,
   apiKey: string,
 ): Promise<EvolutionAction | null> {
-  // Research every 30 minutes
+  // Research every 10 minutes — continuous exploration
   const lastResearch = evoState.lastResearch
     ? new Date(evoState.lastResearch).getTime()
     : 0;
-  if (Date.now() - lastResearch < 30 * 60_000) return null;
+  if (Date.now() - lastResearch < 10 * 60_000) return null;
 
   const strategyIndex = evoState.researchStrategyIndex || 0;
   const strategies = ['exploit', 'explore', 'serendipity', 'contrarian'];
@@ -654,17 +686,17 @@ export async function tick(
   // Repo hygiene (every 30 min) — runs before steps, doesn't consume a step slot
   await stepRepoHygiene(evoState);
 
-  // Priority-ordered evolution steps
-  // Each tick runs ONE step, then yields back to the main loop
+  // Priority-ordered evolution steps — run ALL available steps per tick.
+  // Never idle when there's work to do: finish one, immediately push to the next.
 
   const steps = [
     // Step 1: Goal execution — highest priority, implement queued fixes
     async () => stepGoalExecution(evoState, apiKey),
 
-    // Step 2: Self-scan (every 5 min) — discovers issues, queues as goals
+    // Step 2: Self-scan (every 2 min) — discovers issues, queues as goals
     async () => stepSelfScan(evoState),
 
-    // Step 3: Research (every 30 min) — finds SOTA techniques, queues as goals
+    // Step 3: Research (every 10 min) — finds SOTA techniques, queues as goals
     async () => stepResearch(evoState, apiKey),
 
     // Step 4: Prompt refinement
@@ -673,12 +705,12 @@ export async function tick(
     // Step 5: Rule expansion (one-time)
     async () => stepRuleExpansion(config, evoState),
 
-    // Step 6: Issue landscape (every ~1 hour)
+    // Step 6: Issue landscape (every 30 min)
     async () => {
       const lastIssueLandscape = evoState.lastIssueLandscape
         ? new Date(evoState.lastIssueLandscape).getTime()
         : 0;
-      if (Date.now() - lastIssueLandscape < 60 * 60_000) return null;
+      if (Date.now() - lastIssueLandscape < 30 * 60_000) return null;
       evoState.lastIssueLandscape = new Date().toISOString();
       return stepIssueLandscape(config, apiKey);
     },
@@ -709,7 +741,7 @@ export async function tick(
           await checkAutonomousRestart(apiKey, orchestratorState);
         }
 
-        break; // One step per tick
+        // Continue to next step — always push forward
       }
     } catch (err) {
       logger.warn({ err }, 'Evolution step failed');
@@ -720,7 +752,7 @@ export async function tick(
           formatStagnationAlert(evoState.consecutiveFailures, duration),
         );
       }
-      break;
+      // Continue to next step — don't let one broken step block others
     }
   }
 
