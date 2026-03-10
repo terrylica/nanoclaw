@@ -151,7 +151,10 @@ export function getExpertPerspectives(): ExpertPerspective[] {
       };
     }
     const fallback = FALLBACK_EXPERTS.find((e) => e.name === name);
-    return fallback!;
+    if (!fallback) {
+      throw new Error(`No fallback expert found for "${name}"`);
+    }
+    return fallback;
   });
 }
 
