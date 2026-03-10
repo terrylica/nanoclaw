@@ -89,7 +89,7 @@ function claudeWebSearch(query: string): string | null {
 // --- Cascade ---
 
 /** Research a known URL (Firecrawl first, then Claude) */
-export async function researchUrl(url: string): Promise<ResearchResult> {
+async function researchUrl(url: string): Promise<ResearchResult> {
   // Channel 1: Firecrawl (free)
   const firecrawlResult = await firecrawlScrape(url);
   if (firecrawlResult) {
