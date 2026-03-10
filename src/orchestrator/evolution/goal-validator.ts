@@ -10,6 +10,7 @@
  * Each gate is independent, returns typed result with timing for observability.
  */
 import { execSync } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -98,10 +99,35 @@ export function runProtectedFileGate(changedFiles: string[]): GateResult {
   };
 }
 
+/** Ensure main repo node_modules is healthy (not a symlink). */
+function ensureNodeModules(): void {
+  const nmPath = path.join(MAIN_REPO, 'node_modules');
+  try {
+    const stat = fs.lstatSync(nmPath);
+    if (stat.isSymbolicLink()) {
+      logger.warn('Build gate: node_modules is a symlink — repairing before tsc');
+      fs.rmSync(nmPath, { force: true });
+      execSync('bun install', {
+        cwd: MAIN_REPO,
+        timeout: 120_000,
+        env: { ...process.env, MISE_NO_CONFIG: '1' },
+      });
+    }
+  } catch {
+    // node_modules doesn't exist — install
+    execSync('bun install', {
+      cwd: MAIN_REPO,
+      timeout: 120_000,
+      env: { ...process.env, MISE_NO_CONFIG: '1' },
+    });
+  }
+}
+
 /** Gate 2: TypeScript build must pass. */
 export function runBuildGate(cwd: string): GateResult {
   const start = Date.now();
   try {
+    ensureNodeModules();
     const tscBin = path.join(MAIN_REPO, 'node_modules/.bin/tsc');
     execSync(`${tscBin} --noEmit`, {
       cwd,
