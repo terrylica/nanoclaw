@@ -71,9 +71,28 @@ export function startIpcWatcher(deps: IpcDeps): void {
             .filter((f) => f.endsWith('.json'));
           for (const file of messageFiles) {
             const filePath = path.join(messagesDir, file);
+            let data: { type?: unknown; chatJid?: unknown; text?: unknown };
             try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
+              data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+            } catch (parseErr) {
+              logger.error(
+                { file, sourceGroup, err: parseErr },
+                'Error parsing IPC message file',
+              );
+              const errorDir = path.join(ipcBaseDir, 'errors');
+              fs.mkdirSync(errorDir, { recursive: true });
+              fs.renameSync(
+                filePath,
+                path.join(errorDir, `${sourceGroup}-${file}`),
+              );
+              continue;
+            }
+            try {
+              if (
+                data.type === 'message' &&
+                typeof data.chatJid === 'string' &&
+                typeof data.text === 'string'
+              ) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
@@ -94,15 +113,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
               }
               fs.unlinkSync(filePath);
             } catch (err) {
+              // sendMessage failed — leave file in place so next poll retries it
               logger.error(
                 { file, sourceGroup, err },
-                'Error processing IPC message',
-              );
-              const errorDir = path.join(ipcBaseDir, 'errors');
-              fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `${sourceGroup}-${file}`),
+                'Error processing IPC message, will retry',
               );
             }
           }
