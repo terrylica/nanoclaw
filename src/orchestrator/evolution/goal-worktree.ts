@@ -68,6 +68,13 @@ export function createWorktree(goalId: string, repoPath: string): WorktreeInfo {
     timeout: 60_000,
   });
 
+  // Symlink node_modules so bun run build/test work in the worktree
+  const mainNodeModules = path.join(repoPath, 'node_modules');
+  const worktreeNodeModules = path.join(worktreePath, 'node_modules');
+  if (fs.existsSync(mainNodeModules) && !fs.existsSync(worktreeNodeModules)) {
+    fs.symlinkSync(mainNodeModules, worktreeNodeModules);
+  }
+
   logger.info({ goalId, worktreePath, branch }, 'Created goal worktree');
 
   return { worktreePath, branch };

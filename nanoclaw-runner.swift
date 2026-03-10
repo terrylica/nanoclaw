@@ -8,7 +8,7 @@ let home = ProcessInfo.processInfo.environment["HOME"] ?? "/Users/terryli"
 let nanoclaw = "\(home)/fork-tools/nanoclaw"
 let envFile = "\(nanoclaw)/.env"
 let nodeEntry = "\(nanoclaw)/dist/orchestrator-cli.js"
-let repoPath = "\(home)/eon/opendeviationbar-py"
+let repoPath = nanoclaw  // Self-evolution: NanoClaw monitors its own repo
 let logDir = "\(home)/.local/state/launchd-logs/nanoclaw"
 
 // Ensure log directory exists
