@@ -6,6 +6,7 @@ import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  ContainerConfig,
   NewMessage,
   RegisteredGroup,
   ScheduledTask,
@@ -537,6 +538,18 @@ export function getAllSessions(): Record<string, string> {
   return result;
 }
 
+// --- Helpers ---
+
+function parseContainerConfig(raw: string | null): ContainerConfig | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as ContainerConfig;
+  } catch {
+    logger.warn({ raw }, 'Skipping malformed container_config JSON');
+    return undefined;
+  }
+}
+
 // --- Registered group accessors ---
 
 export function getRegisteredGroup(
@@ -570,9 +583,7 @@ export function getRegisteredGroup(
     folder: row.folder,
     trigger: row.trigger_pattern,
     added_at: row.added_at,
-    containerConfig: row.container_config
-      ? JSON.parse(row.container_config)
-      : undefined,
+    containerConfig: parseContainerConfig(row.container_config),
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
@@ -623,9 +634,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       folder: row.folder,
       trigger: row.trigger_pattern,
       added_at: row.added_at,
-      containerConfig: row.container_config
-        ? JSON.parse(row.container_config)
-        : undefined,
+      containerConfig: parseContainerConfig(row.container_config),
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
