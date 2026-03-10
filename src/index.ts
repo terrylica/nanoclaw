@@ -183,8 +183,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     lastAgentTimestamp[chatJid] !== undefined
       ? lastAgentTimestamp[chatJid]
       : String(Number(missedMessages[0].timestamp) - 1);
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
+  const advancedCursor = missedMessages[missedMessages.length - 1].timestamp;
+  lastAgentTimestamp[chatJid] = advancedCursor;
   saveState();
 
   logger.info(
@@ -250,13 +250,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     }
-    // Roll back cursor so retries can re-process these messages
-    lastAgentTimestamp[chatJid] = previousCursor;
-    saveState();
-    logger.warn(
-      { group: group.name },
-      'Agent error, rolled back message cursor for retry',
-    );
+    // Roll back cursor so retries can re-process these messages.
+    // Guard: only roll back if no concurrent update (e.g. startMessageLoop piping)
+    // has advanced the cursor beyond what we set — rolling back a newer cursor
+    // would cause duplicate processing of already-piped messages.
+    if (lastAgentTimestamp[chatJid] === advancedCursor) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name },
+        'Agent error, rolled back message cursor for retry',
+      );
+    } else {
+      logger.warn(
+        { group: group.name },
+        'Agent error, cursor advanced by concurrent update, skipping rollback to prevent duplicates',
+      );
+    }
     return false;
   }
 
