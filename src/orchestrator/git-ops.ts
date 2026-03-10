@@ -34,7 +34,8 @@ export function getGitBranch(repoPath: string): string {
       cwd: repoPath,
       encoding: 'utf-8',
     }).trim();
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, 'git branch --show-current failed, returning unknown');
     return 'unknown';
   }
 }
@@ -64,7 +65,8 @@ export function getChangedFiles(
       .trim()
       .split('\n')
       .filter((f) => f.length > 0);
-  } catch {
+  } catch (err) {
+    logger.error({ err }, 'git diff --name-only failed');
     return [];
   }
 }
@@ -76,7 +78,8 @@ export function getCommitLog(repoPath: string, sinceCommit: string): string {
       encoding: 'utf-8',
       maxBuffer: 1024 * 1024,
     }).trim();
-  } catch {
+  } catch (err) {
+    logger.error({ err }, 'git log failed');
     return '';
   }
 }
@@ -86,7 +89,8 @@ export function readRepoFile(repoPath: string, filePath: string): string {
   try {
     const fullPath = path.join(repoPath, filePath);
     return fs.readFileSync(fullPath, 'utf-8');
-  } catch {
+  } catch (err) {
+    logger.error({ err, filePath }, 'readRepoFile failed');
     return '';
   }
 }
@@ -106,11 +110,13 @@ export function getScannableFiles(repoPath: string): string[] {
         const sA = fs.statSync(path.join(repoPath, a)).size;
         const sB = fs.statSync(path.join(repoPath, b)).size;
         return sB - sA;
-      } catch {
+      } catch (err) {
+        logger.warn({ err }, 'statSync failed during file sort');
         return 0;
       }
     });
-  } catch {
+  } catch (err) {
+    logger.error({ err }, 'getScannableFiles failed');
     return [];
   }
 }
