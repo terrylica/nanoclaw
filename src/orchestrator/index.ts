@@ -10,6 +10,8 @@
  * Safety: rate limiting, fuzzy dedup, exponential backoff, severity gating.
  */
 import { execSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
@@ -155,6 +157,36 @@ export async function startOrchestratorLoop(config: {
   initEvolutionEngine(evoState);
   if (botToken) {
     initFeedbackHandler(botToken);
+  }
+
+  // Startup guard: repair node_modules if corrupted (self-referential symlink from crashed goals)
+  try {
+    const nmPath = path.join(config.repoPath, 'node_modules');
+    const nmStat = fs.lstatSync(nmPath);
+    if (nmStat.isSymbolicLink()) {
+      logger.warn('Startup: node_modules is a symlink — repairing');
+      fs.rmSync(nmPath, { force: true });
+      execSync('bun install', {
+        cwd: config.repoPath,
+        timeout: 120_000,
+        env: { ...process.env, MISE_NO_CONFIG: '1' },
+      });
+    }
+  } catch {
+    /* node_modules doesn't exist or check failed — non-fatal */
+  }
+
+  // Startup guard: clean up stale goal worktrees from crashed sessions
+  try {
+    const { cleanupStaleWorktrees } = await import(
+      './evolution/goal-worktree.js'
+    );
+    const cleaned = cleanupStaleWorktrees(config.repoPath);
+    if (cleaned > 0) {
+      logger.info({ cleaned }, 'Startup: cleaned stale goal worktrees');
+    }
+  } catch {
+    /* non-fatal */
   }
 
   logger.info(
