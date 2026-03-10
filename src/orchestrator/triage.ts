@@ -158,9 +158,6 @@ export function getExpertPerspectives(): ExpertPerspective[] {
   });
 }
 
-// Exported for backward compatibility (now dynamically loaded)
-export const EXPERT_PERSPECTIVES: ExpertPerspective[] = FALLBACK_EXPERTS;
-
 export function buildTriagePrompt(
   diff: string,
   commitLog: string,
