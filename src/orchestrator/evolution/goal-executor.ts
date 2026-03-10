@@ -11,7 +11,8 @@
  * Observability: every step is logged with timing and context for debugging.
  */
 import path from 'path';
-import { spawnSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 import { logger } from '../../logger.js';
@@ -287,6 +288,24 @@ export async function executeGoal(
     // Always cleanup worktree
     if (worktreePath && branch) {
       cleanupWorktree(worktreePath, branch, SELF_REPO);
+    }
+
+    // Guard: if node_modules in main repo became a symlink (Claude Code in worktree
+    // can corrupt it via bun install), restore it immediately
+    try {
+      const nmPath = path.join(SELF_REPO, 'node_modules');
+      const stat = fs.lstatSync(nmPath);
+      if (stat.isSymbolicLink()) {
+        logger.warn('node_modules is a symlink — removing and reinstalling');
+        fs.rmSync(nmPath, { force: true });
+        execSync('bun install', {
+          cwd: SELF_REPO,
+          timeout: 120_000,
+          env: { ...process.env, MISE_NO_CONFIG: '1' },
+        });
+      }
+    } catch {
+      /* node_modules doesn't exist or check failed — non-fatal */
     }
   }
 }

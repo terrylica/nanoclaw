@@ -296,6 +296,9 @@ Only report findings with confidence >= 4 and concrete code references.`;
 
     return action;
   } catch (err) {
+    // Still set lastSelfScan on failure to prevent tight retry loops
+    // (e.g. missing Pi SDK packages cause immediate import failure)
+    evoState.lastSelfScan = new Date().toISOString();
     updateAction(action, 'failed', {
       result: String(err).slice(0, 200),
     });
