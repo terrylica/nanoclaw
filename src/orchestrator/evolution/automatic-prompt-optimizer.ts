@@ -28,6 +28,17 @@ export interface TestCase {
   forbiddenKeywords?: string[];
 }
 
+export interface PromptTelemetry {
+  /** Total LLM calls made during optimization */
+  totalCalls: number;
+  /** Cumulative input tokens across all calls */
+  totalInputTokens: number;
+  /** Cumulative output tokens across all calls */
+  totalOutputTokens: number;
+  /** Average latency per LLM call in ms */
+  avgLatencyMs: number;
+}
+
 export interface OptimizationResult {
   /** Final (possibly improved) system prompt */
   systemPrompt: string;
@@ -37,6 +48,8 @@ export interface OptimizationResult {
   finalScore: number;
   /** Whether the prompt was improved at all */
   improved: boolean;
+  /** Execution time and token usage telemetry */
+  telemetry: PromptTelemetry;
 }
 
 export interface AutomaticPromptOptimizerOptions {
@@ -78,6 +91,12 @@ export class AutomaticPromptOptimizer {
   private readonly rounds: number;
   private readonly timeoutMs: number;
 
+  // Telemetry accumulators (reset on each optimize() call)
+  private _telemetryCalls = 0;
+  private _telemetryInputTokens = 0;
+  private _telemetryOutputTokens = 0;
+  private _telemetryTotalLatencyMs = 0;
+
   constructor(options: AutomaticPromptOptimizerOptions) {
     this.apiKey = options.apiKey;
     this.rounds = options.rounds ?? 3;
@@ -89,6 +108,11 @@ export class AutomaticPromptOptimizer {
     mod: PromptModule<TInput, TOutput>,
     testCases: TestCase[],
   ): Promise<OptimizationResult> {
+    this._telemetryCalls = 0;
+    this._telemetryInputTokens = 0;
+    this._telemetryOutputTokens = 0;
+    this._telemetryTotalLatencyMs = 0;
+
     let currentSystemPrompt = mod.systemPrompt;
     let bestScore = 0;
     let improved = false;
@@ -156,11 +180,27 @@ export class AutomaticPromptOptimizer {
       }
     }
 
+    const telemetry: PromptTelemetry = {
+      totalCalls: this._telemetryCalls,
+      totalInputTokens: this._telemetryInputTokens,
+      totalOutputTokens: this._telemetryOutputTokens,
+      avgLatencyMs:
+        this._telemetryCalls > 0
+          ? Math.round(this._telemetryTotalLatencyMs / this._telemetryCalls)
+          : 0,
+    };
+
+    logger.info(
+      { promptId: mod.id, ...telemetry },
+      'AutomaticPromptOptimizer: telemetry summary',
+    );
+
     return {
       systemPrompt: currentSystemPrompt,
       rounds: this.rounds,
       finalScore: bestScore,
       improved,
+      telemetry,
     };
   }
 
@@ -241,6 +281,7 @@ Return ONLY the improved system prompt text, with no commentary.`;
       body.system = systemPrompt;
     }
 
+    const t0 = Date.now();
     const response = await fetchWithTimeout(
       `${MINIMAX_BASE_URL}/v1/messages`,
       {
@@ -254,6 +295,7 @@ Return ONLY the improved system prompt text, with no commentary.`;
       },
       this.timeoutMs,
     );
+    const latencyMs = Date.now() - t0;
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
@@ -262,7 +304,15 @@ Return ONLY the improved system prompt text, with no commentary.`;
 
     const data = (await response.json()) as {
       content: Array<{ type: string; text?: string }>;
+      usage?: { input_tokens?: number; output_tokens?: number };
     };
+
+    // Accumulate telemetry
+    this._telemetryCalls++;
+    this._telemetryTotalLatencyMs += latencyMs;
+    this._telemetryInputTokens += data.usage?.input_tokens ?? 0;
+    this._telemetryOutputTokens += data.usage?.output_tokens ?? 0;
+
     return data.content
       .filter((b) => b.type === 'text' && b.text)
       .map((b) => b.text!)
