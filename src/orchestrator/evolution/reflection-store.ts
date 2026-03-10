@@ -69,7 +69,10 @@ export function addReflection(
   score?: number,
 ): ReflectionEntry {
   const db = getDb();
-  const stmt = db.prepare<ReflectionEntry, [string, string, string, number | null]>(`
+  const stmt = db.prepare<
+    ReflectionEntry,
+    [string, string, string, number | null]
+  >(`
     INSERT INTO reflections (kind, context, content, score)
     VALUES (?, ?, ?, ?)
     RETURNING id, kind, context, content, score,

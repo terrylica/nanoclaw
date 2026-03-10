@@ -12,8 +12,16 @@ import type { Finding } from './types.js';
 // Registry prompt IDs → self-validation round metadata
 const ROUND_REGISTRY_MAP = [
   { registryId: 'self-val-fact-check', name: 'Fact-Check', icon: '🔬' },
-  { registryId: 'self-val-domain-rebuttal', name: 'Domain Rebuttal', icon: '📊' },
-  { registryId: 'self-val-reproducibility', name: 'Reproducibility Check', icon: '🧪' },
+  {
+    registryId: 'self-val-domain-rebuttal',
+    name: 'Domain Rebuttal',
+    icon: '📊',
+  },
+  {
+    registryId: 'self-val-reproducibility',
+    name: 'Reproducibility Check',
+    icon: '🧪',
+  },
 ];
 
 // Hardcoded fallbacks
@@ -76,7 +84,6 @@ function getSelfValidationRounds(): typeof FALLBACK_ROUNDS {
     return FALLBACK_ROUNDS.find((r) => r.name === name)!;
   });
 }
-
 
 /**
  * Run iterative MiniMax self-validation: challenge findings through multiple

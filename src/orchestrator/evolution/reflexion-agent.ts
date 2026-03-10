@@ -10,7 +10,11 @@
  *   const entry = await agent.reflect(outcomes);
  */
 
-import { addReflection, getRecentReflections, type ReflectionEntry } from './reflection-store.js';
+import {
+  addReflection,
+  getRecentReflections,
+  type ReflectionEntry,
+} from './reflection-store.js';
 
 // --- Types ---
 
@@ -42,23 +46,35 @@ export class ReflexionAgent {
    */
   reflect(outcomes: TaskOutcome[]): ReflectionEntry {
     if (outcomes.length === 0) {
-      return addReflection('feedback', this.context, 'No outcomes to reflect on.', null as unknown as number);
+      return addReflection(
+        'feedback',
+        this.context,
+        'No outcomes to reflect on.',
+        null as unknown as number,
+      );
     }
 
-    const successes = outcomes.filter(o => o.success);
-    const failures = outcomes.filter(o => !o.success);
+    const successes = outcomes.filter((o) => o.success);
+    const failures = outcomes.filter((o) => !o.success);
     const score = (successes.length - failures.length) / outcomes.length;
 
     const lines: string[] = [];
 
     if (successes.length > 0) {
-      lines.push(`Succeeded (${successes.length}): ${successes.map(o => o.task + (o.detail ? ` — ${o.detail}` : '')).join('; ')}.`);
+      lines.push(
+        `Succeeded (${successes.length}): ${successes.map((o) => o.task + (o.detail ? ` — ${o.detail}` : '')).join('; ')}.`,
+      );
     }
     if (failures.length > 0) {
-      lines.push(`Failed (${failures.length}): ${failures.map(o => o.task + (o.detail ? ` — ${o.detail}` : '')).join('; ')}.`);
+      lines.push(
+        `Failed (${failures.length}): ${failures.map((o) => o.task + (o.detail ? ` — ${o.detail}` : '')).join('; ')}.`,
+      );
     }
 
-    const verdict = score >= 0 ? 'Overall positive result.' : 'Overall negative result — adjustments needed.';
+    const verdict =
+      score >= 0
+        ? 'Overall positive result.'
+        : 'Overall negative result — adjustments needed.';
     lines.push(verdict);
 
     const content = lines.join(' ');
@@ -71,7 +87,7 @@ export class ReflexionAgent {
    */
   recentFeedback(limit = 20): ReflectionEntry[] {
     return getRecentReflections('feedback', limit).filter(
-      e => e.context === this.context,
+      (e) => e.context === this.context,
     );
   }
 }

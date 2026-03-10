@@ -7,7 +7,10 @@ import path from 'path';
 
 import { DATA_DIR } from '../config.js';
 
-const CLAUDE_BIN = path.join(process.env.HOME || '/Users/terryli', '.local/bin/claude');
+const CLAUDE_BIN = path.join(
+  process.env.HOME || '/Users/terryli',
+  '.local/bin/claude',
+);
 import { logger } from '../logger.js';
 import { setCcSkillsContent } from './github-issues.js';
 import { getTargetRepo } from './pipeline.js';
@@ -59,7 +62,9 @@ export function syncCcSkills(ccSkillsPath: string): void {
     logger.warn({ err }, 'cc-skills sync failed (non-fatal)');
     notify(
       `<b>⚠️ cc-skills Sync Failed</b>\n\n<code>${escapeHtml(String(err).slice(0, 200))}</code>`,
-    ).catch((notifyErr: unknown) => { logger.warn({ err: notifyErr }, 'Telegram notification failed'); });
+    ).catch((notifyErr: unknown) => {
+      logger.warn({ err: notifyErr }, 'Telegram notification failed');
+    });
   }
 }
 

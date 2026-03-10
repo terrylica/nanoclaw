@@ -69,6 +69,8 @@ export interface EvolutionState {
   lastTelegramUpdateId?: number;
   /** Finding pattern activation scores: pattern -> { score, lastSeen } */
   patternActivation: Record<string, { score: number; lastSeen: string }>;
+  /** Last repo hygiene timestamp (stash cleanup, push, dirty tree reset) */
+  lastRepoHygiene?: string;
   /** Queued goals for autonomous execution */
   userGoals?: UserGoal[];
 }

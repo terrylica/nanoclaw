@@ -132,7 +132,10 @@ export class TelegramChannel implements Channel {
     });
 
     // Handle non-text messages with placeholders so the agent knows something was sent
-    const storeNonText = (ctx: Filter<Context, 'message'>, placeholder: string) => {
+    const storeNonText = (
+      ctx: Filter<Context, 'message'>,
+      placeholder: string,
+    ) => {
       const chatJid = `tg:${ctx.chat.id}`;
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;

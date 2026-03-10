@@ -17,7 +17,11 @@ import {
   sendTelegramNotification,
   formatFindingNotification,
 } from './telegram.js';
-import { suggestLabels, createGitHubIssue, issueExistsFuzzy } from './github-issues.js';
+import {
+  suggestLabels,
+  createGitHubIssue,
+  issueExistsFuzzy,
+} from './github-issues.js';
 import { saveState, checkRateLimit } from './state.js';
 import {
   ALGO_SCAN_INTERVAL_MS,
@@ -309,7 +313,8 @@ export async function runAlgoCorrectnessScan(
   repoPath: string,
 ): Promise<{ findings: Finding[]; totalFiles: number; chunksScanned: number }> {
   const algoEntry = getPrompt('algo-correctness-scan');
-  const algoPrompt = algoEntry?.systemPrompt ?? PROACTIVE_ALGO_CORRECTNESS_PROMPT;
+  const algoPrompt =
+    algoEntry?.systemPrompt ?? PROACTIVE_ALGO_CORRECTNESS_PROMPT;
   const result = await runAgenticSweep(
     repoPath,
     algoPrompt,

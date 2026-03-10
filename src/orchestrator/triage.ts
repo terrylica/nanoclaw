@@ -277,7 +277,9 @@ export async function triageChanges(
         );
         notify(
           `<b>⚠️ Triage Expert Failed</b>\n\nPerspective: <code>${escapeHtml(expert.name)}</code>\n<code>${escapeHtml(String(err).slice(0, 150))}</code>`,
-        ).catch((notifyErr: unknown) => { logger.warn({ err: notifyErr }, 'Triage notification failed'); });
+        ).catch((notifyErr: unknown) => {
+          logger.warn({ err: notifyErr }, 'Triage notification failed');
+        });
         return { expert: expert.name, findings: [] as Finding[], raw: '' };
       }
     }),

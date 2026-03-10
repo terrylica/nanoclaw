@@ -98,9 +98,7 @@ async function stepPromptRefinement(
 ): Promise<EvolutionAction | null> {
   // Gate: skip if no prompts have 5+ uses (avoids 100% failure thrashing)
   const metrics = getMetrics();
-  const hasData = metrics.some(
-    (m: { uses: number }) => m.uses >= 5,
-  );
+  const hasData = metrics.some((m: { uses: number }) => m.uses >= 5);
   if (!hasData) return null;
 
   const action = createAction(
@@ -412,12 +410,12 @@ async function stepGoalExecution(
       removeGoal(evoState, 0);
       recordSuccess(evoState);
 
-      // Restore stashed changes
+      // Restore stashed changes — drop if conflict
       if (hasStash) {
         try {
-          execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 });
+          execSync('git stash pop', { cwd: SELF_REPO, encoding: 'utf-8', timeout: 30_000 });
         } catch {
-          /* ignore */
+          try { execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
         }
       }
       return action;
@@ -451,9 +449,10 @@ async function stepGoalExecution(
 
       if (hasStash) {
         try {
-          execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 });
+          execSync('git stash pop', { cwd: SELF_REPO, encoding: 'utf-8', timeout: 30_000 });
         } catch {
-          /* ignore */
+          try { execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
+          try { execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
         }
       }
       return action;
@@ -497,12 +496,14 @@ async function stepGoalExecution(
 
     removeGoal(evoState, 0);
 
-    // Restore stashed changes
+    // Restore stashed changes — if pop fails (conflict), drop stale stash + clean tree
     if (hasStash) {
       try {
-        execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 });
+        execSync('git stash pop', { cwd: SELF_REPO, encoding: 'utf-8', timeout: 30_000 });
       } catch {
-        /* ignore */
+        logger.warn('Stash pop conflict after goal — dropping stale stash');
+        try { execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
+        try { execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
       }
     }
 
@@ -510,11 +511,12 @@ async function stepGoalExecution(
   } catch (err) {
     updateAction(action, 'failed', { result: String(err).slice(0, 200) });
     removeGoal(evoState, 0);
-    // Try to restore stash on unexpected error
+    // Try to restore stash — drop if conflict
     try {
-      execSync('git stash pop', { cwd: SELF_REPO, timeout: 30_000 });
+      execSync('git stash pop', { cwd: SELF_REPO, encoding: 'utf-8', timeout: 30_000 });
     } catch {
-      /* ignore */
+      try { execSync('git stash drop', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
+      try { execSync('git checkout .', { cwd: SELF_REPO, timeout: 10_000 }); } catch { /* */ }
     }
     return null;
   }
@@ -591,6 +593,117 @@ async function stepResearch(
   }
 }
 
+/** Step 7: Repo Hygiene — drop stale stashes, push commits, reset dirty tree */
+async function stepRepoHygiene(
+  evoState: EvolutionState,
+): Promise<EvolutionAction | null> {
+  // Run every 30 minutes
+  const lastHygiene = evoState.lastRepoHygiene
+    ? new Date(evoState.lastRepoHygiene).getTime()
+    : 0;
+  if (Date.now() - lastHygiene < 30 * 60_000) return null;
+
+  evoState.lastRepoHygiene = new Date().toISOString();
+
+  let stashesDropped = 0;
+  let filesCleaned = 0;
+  let commitsPushed = 0;
+
+  // 1. Drop all nanoclaw-goal-execution stashes (stale from failed pops)
+  try {
+    const stashList = execSync('git stash list', {
+      cwd: SELF_REPO,
+      encoding: 'utf-8',
+      timeout: 10_000,
+    }).trim();
+    if (stashList) {
+      const stashLines = stashList
+        .split('\n')
+        .filter((l) => l.includes('nanoclaw-goal-execution'));
+      // Drop from highest index to lowest so indices don't shift
+      for (let i = stashLines.length - 1; i >= 0; i--) {
+        const match = stashLines[i].match(/^stash@\{(\d+)\}/);
+        if (match) {
+          try {
+            execSync(`git stash drop stash@{${match[1]}}`, {
+              cwd: SELF_REPO,
+              timeout: 10_000,
+            });
+            stashesDropped++;
+          } catch { /* */ }
+        }
+      }
+    }
+  } catch { /* */ }
+
+  // 2. Reset dirty working tree (discard uncommitted changes — they're stale goal residue)
+  try {
+    const dirty = execSync('git diff --name-only', {
+      cwd: SELF_REPO,
+      encoding: 'utf-8',
+      timeout: 10_000,
+    }).trim();
+    if (dirty) {
+      filesCleaned = dirty.split('\n').length;
+      execSync('git checkout .', { cwd: SELF_REPO, timeout: 30_000 });
+      // Also remove untracked files from failed goals
+      const untracked = execSync(
+        'git ls-files --others --exclude-standard',
+        { cwd: SELF_REPO, encoding: 'utf-8', timeout: 10_000 },
+      ).trim();
+      if (untracked) {
+        for (const f of untracked.split('\n').filter(Boolean)) {
+          try {
+            execSync(`rm -f "${f}"`, { cwd: SELF_REPO, timeout: 5_000 });
+          } catch { /* */ }
+        }
+        filesCleaned += untracked.split('\n').filter(Boolean).length;
+      }
+    }
+  } catch { /* */ }
+
+  // 3. Push to remote if 5+ commits ahead
+  try {
+    const aheadStr = execSync('git rev-list --count origin/main..HEAD', {
+      cwd: SELF_REPO,
+      encoding: 'utf-8',
+      timeout: 10_000,
+    }).trim();
+    const ahead = parseInt(aheadStr) || 0;
+    if (ahead >= 5) {
+      execSync('git push', {
+        cwd: SELF_REPO,
+        encoding: 'utf-8',
+        timeout: 120_000,
+      });
+      commitsPushed = ahead;
+      logger.info({ pushed: ahead }, 'Pushed evolution commits to remote');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to push evolution commits');
+  }
+
+  // Only report if we actually did something
+  if (stashesDropped > 0 || filesCleaned > 0 || commitsPushed > 0) {
+    const parts: string[] = [];
+    if (stashesDropped > 0) parts.push(`${stashesDropped} stale stashes dropped`);
+    if (filesCleaned > 0) parts.push(`${filesCleaned} dirty files cleaned`);
+    if (commitsPushed > 0) parts.push(`${commitsPushed} commits pushed`);
+
+    logger.info({ stashesDropped, filesCleaned, commitsPushed }, 'Repo hygiene complete');
+
+    await notify(
+      [
+        `<b>🧹 Repo Hygiene</b>`,
+        ``,
+        ...parts.map((p) => `• ${p}`),
+      ].join('\n'),
+    );
+  }
+
+  return null; // maintenance step, no evolution action to report
+}
+
 // --- Module-level State ---
 
 let evoState: EvolutionState;
@@ -628,6 +741,9 @@ export async function tick(
 
   // Poll Telegram callbacks (non-blocking)
   await pollCallbacks();
+
+  // Repo hygiene (every 30 min) — runs before steps, doesn't consume a step slot
+  await stepRepoHygiene(evoState);
 
   // Priority-ordered evolution steps
   // Each tick runs ONE step, then yields back to the main loop

@@ -16,7 +16,10 @@ import { logger } from '../../logger.js';
 
 const FIRECRAWL_URL = 'http://172.25.236.1:3003';
 const CLAUDE_SEARCH_BUDGET = '1.00';
-const CLAUDE_BIN = path.join(process.env.HOME || '/Users/terryli', '.local/bin/claude');
+const CLAUDE_BIN = path.join(
+  process.env.HOME || '/Users/terryli',
+  '.local/bin/claude',
+);
 
 // --- Types ---
 
@@ -71,15 +74,24 @@ function claudeWebSearch(query: string): string | null {
     );
 
     if (result.error || result.status !== 0) {
-      logger.debug({ error: String(result.error || result.stderr).slice(0, 200) }, 'Claude WebSearch failed');
+      logger.debug(
+        { error: String(result.error || result.stderr).slice(0, 200) },
+        'Claude WebSearch failed',
+      );
       return null;
     }
     const output = result.stdout.trim();
     if (!output || output.length <= 50 || output.startsWith('Error:')) {
-      logger.debug({ outputLen: output.length, preview: output.slice(0, 100) }, 'Claude WebSearch empty/error result');
+      logger.debug(
+        { outputLen: output.length, preview: output.slice(0, 100) },
+        'Claude WebSearch empty/error result',
+      );
       return null;
     }
-    logger.info({ query: query.slice(0, 50), outputLen: output.length }, 'Claude WebSearch success');
+    logger.info(
+      { query: query.slice(0, 50), outputLen: output.length },
+      'Claude WebSearch success',
+    );
     return output;
   } catch {
     return null;
@@ -115,7 +127,9 @@ async function researchUrl(url: string): Promise<ResearchResult> {
  * Run a full research cycle: MiniMax picks topics → Claude researches → MiniMax synthesizes.
  * Returns actionable items that can be queued as goals.
  */
-export async function runResearchCycle(apiKey: string): Promise<{ topics: string[]; actionItems: string[] }> {
+export async function runResearchCycle(
+  apiKey: string,
+): Promise<{ topics: string[]; actionItems: string[] }> {
   const { queryMiniMax } = await import('../minimax-client.js');
 
   // Step 1: MiniMax picks research topics based on NanoClaw's current state
@@ -130,7 +144,11 @@ Pick 2 research topics that would provide the highest-value improvements. Focus 
 Return EXACTLY 2 lines, one topic per line. No numbering, no bullets, just the search query.`;
 
   const topicResponse = await queryMiniMax(topicPrompt, apiKey);
-  const topics = topicResponse.trim().split('\n').filter((l: string) => l.trim().length > 10).slice(0, 2);
+  const topics = topicResponse
+    .trim()
+    .split('\n')
+    .filter((l: string) => l.trim().length > 10)
+    .slice(0, 2);
 
   if (topics.length === 0) return { topics: [], actionItems: [] };
 
@@ -144,7 +162,9 @@ Return EXACTLY 2 lines, one topic per line. No numbering, no bullets, just the s
   if (results.length === 0) return { topics, actionItems: [] };
 
   // Step 3: MiniMax synthesizes actionable items
-  const researchContent = results.map((r: ResearchResult) => r.content.slice(0, 5000)).join('\n\n---\n\n');
+  const researchContent = results
+    .map((r: ResearchResult) => r.content.slice(0, 5000))
+    .join('\n\n---\n\n');
   const synthesisPrompt = `Based on this research about code analysis and autonomous agents, identify concrete, actionable improvements for NanoClaw (TypeScript/Bun codebase).
 
 Research:
@@ -153,9 +173,16 @@ ${researchContent}
 Return up to 5 specific, implementable action items. Each should be a single sentence describing what to change/add and why. One per line, no bullets or numbering.`;
 
   const synthesisResponse = await queryMiniMax(synthesisPrompt, apiKey);
-  const actionItems = synthesisResponse.trim().split('\n').filter((l: string) => l.trim().length > 20).slice(0, 5);
+  const actionItems = synthesisResponse
+    .trim()
+    .split('\n')
+    .filter((l: string) => l.trim().length > 20)
+    .slice(0, 5);
 
-  logger.info({ topics, actionCount: actionItems.length }, 'Research cycle complete');
+  logger.info(
+    { topics, actionCount: actionItems.length },
+    'Research cycle complete',
+  );
   return { topics, actionItems };
 }
 

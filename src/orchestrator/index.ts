@@ -32,14 +32,13 @@ import {
   createGitHubIssue,
   issueExistsFuzzy,
 } from './github-issues.js';
-import { syncCcSkills, runClaudeMdMaintenance } from './maintenance.js';
+import { runClaudeMdMaintenance } from './maintenance.js';
 import {
   setTargetRepo,
   syncFalsePositivePatterns,
   verifyFindingScript,
   validateWithClaude,
 } from './pipeline.js';
-import { runAlgoScanCycle, runProactiveScanCycle } from './scanning.js';
 import {
   loadState,
   saveState,
@@ -63,12 +62,10 @@ import {
 } from './telegram.js';
 import { triageChanges } from './triage.js';
 import {
-  ALGO_SCAN_INTERVAL_MS,
   CYCLE_COOLDOWN_ERROR_MS,
   CYCLE_COOLDOWN_MS,
   HEARTBEAT_INTERVAL_MS,
   MAX_ISSUES_PER_HOUR,
-  PROACTIVE_SCAN_INTERVAL_MS,
   traceId,
 } from './types.js';
 import {
@@ -92,14 +89,12 @@ export async function startOrchestratorLoop(config: {
     'MINIMAX_API_KEY',
     'TELEGRAM_BOT_TOKEN',
     'TELEGRAM_CHAT_ID',
-    'CC_SKILLS_PATH',
     'GITHUB_REPO',
   ]);
   const minimaxKey = process.env.MINIMAX_API_KEY || env.MINIMAX_API_KEY || '';
   const botToken =
     process.env.TELEGRAM_BOT_TOKEN || env.TELEGRAM_BOT_TOKEN || '';
   const chatId = process.env.TELEGRAM_CHAT_ID || env.TELEGRAM_CHAT_ID || '';
-  const ccSkillsPath = process.env.CC_SKILLS_PATH || env.CC_SKILLS_PATH || '';
 
   // Expose MINIMAX_API_KEY in process.env for Pi SDK (reads env vars directly)
   if (minimaxKey && !process.env.MINIMAX_API_KEY) {
@@ -151,11 +146,6 @@ export async function startOrchestratorLoop(config: {
     );
   }
 
-  if (ccSkillsPath) {
-    syncCcSkills(ccSkillsPath);
-    logger.info({ ccSkillsPath }, 'cc-skills path configured');
-  }
-
   syncFalsePositivePatterns();
 
   // Initialize evolution engine
@@ -183,10 +173,10 @@ export async function startOrchestratorLoop(config: {
       [
         `<b>🚀 NanoClaw Orchestrator Started</b>`,
         ``,
-        `• Repo: <code>opendeviationbar-py</code>`,
+        `• Repo: <code>nanoclaw</code> (self-evolution)`,
         `• Branch: <code>${branch}</code>`,
         `• From commit: <code>${state.lastCheckedCommit.slice(0, 7)}</code>`,
-        `• Mode: continuous diff-driven (MiniMax + Claude)`,
+        `• Mode: autonomous self-evolution (MiniMax + Claude)`,
         `• Rate limit: <code>${MAX_ISSUES_PER_HOUR}/hr</code>`,
         ``,
         `<i>${new Date().toLocaleString('en-CA', { timeZone: 'America/Vancouver', hour12: false })}</i>`,
@@ -224,7 +214,10 @@ export async function startOrchestratorLoop(config: {
           consecutiveFailures: evoStatus.consecutiveFailures,
           goalsQueued: evoStatus.goalsQueued,
           promptCount: evoStatus.promptMetrics.length,
-          totalUses: evoStatus.promptMetrics.reduce((sum: number, m: { uses: number }) => sum + m.uses, 0),
+          totalUses: evoStatus.promptMetrics.reduce(
+            (sum: number, m: { uses: number }) => sum + m.uses,
+            0,
+          ),
         };
         await sendTelegramNotification(
           formatHeartbeat(state, branch, evoStats),
@@ -234,7 +227,6 @@ export async function startOrchestratorLoop(config: {
         state.lastHeartbeat = new Date().toISOString();
         saveState(state);
 
-        if (ccSkillsPath) syncCcSkills(ccSkillsPath);
         syncFalsePositivePatterns();
         rotateLogIfNeeded();
       }
@@ -328,32 +320,9 @@ export async function startOrchestratorLoop(config: {
       // Step 2: Check for changes
       const headCommit = getHeadCommit(config.repoPath);
       if (headCommit === state.lastCheckedCommit) {
-        const now = Date.now();
-
-        // Evolution engine first — self-scan, prompt evolution, etc.
-        // Runs before proactive scans so self-scan gets its 5min cadence
+        // Evolution engine — self-scan, prompt evolution, goal execution, research, repo hygiene
         if (minimaxKey && canCallMiniMax()) {
           await evolutionTick(state, minimaxKey, config);
-        }
-
-        const lastEnhScan = state.lastProactiveScan
-          ? new Date(state.lastProactiveScan).getTime()
-          : 0;
-        if (now - lastEnhScan >= PROACTIVE_SCAN_INTERVAL_MS && minimaxKey) {
-          await runProactiveScanCycle(
-            config,
-            state,
-            minimaxKey,
-            botToken,
-            chatId,
-          );
-        }
-
-        const lastAlgoScan = state.lastAlgoScan
-          ? new Date(state.lastAlgoScan).getTime()
-          : 0;
-        if (now - lastAlgoScan >= ALGO_SCAN_INTERVAL_MS && minimaxKey) {
-          await runAlgoScanCycle(config, state, minimaxKey, botToken, chatId);
         }
 
         await sleep(CYCLE_COOLDOWN_MS);
