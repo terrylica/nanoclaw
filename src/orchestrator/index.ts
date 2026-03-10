@@ -613,8 +613,8 @@ export async function startOrchestratorLoop(config: {
               botToken,
               chatId,
             );
-          } catch {
-            // Diagnosis failure must not block recovery
+          } catch (diagErr) {
+            logger.warn({ err: diagErr }, 'MiniMax diagnosis failed');
           }
         }
       }
