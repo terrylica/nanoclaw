@@ -328,8 +328,11 @@ export class GroupQueue {
   }
 
   private drainWaiting(): void {
+    // `skipped` tracks how many consecutive empty groups were re-enqueued.
+    // When skipped == waitingGroups.length, every remaining group is empty — stop.
+    let skipped = 0;
     while (
-      this.waitingGroups.length > 0 &&
+      this.waitingGroups.length > skipped &&
       this.activeCount < MAX_CONCURRENT_CONTAINERS
     ) {
       const nextJid = this.waitingGroups.shift()!;
@@ -337,6 +340,7 @@ export class GroupQueue {
 
       // Prioritize tasks over messages
       if (state.pendingTasks.length > 0) {
+        skipped = 0;
         const task = state.pendingTasks.shift()!;
         this.runTask(nextJid, task).catch((err) =>
           logger.error(
@@ -345,14 +349,19 @@ export class GroupQueue {
           ),
         );
       } else if (state.pendingMessages) {
+        skipped = 0;
         this.runForGroup(nextJid, 'drain').catch((err) =>
           logger.error(
             { groupJid: nextJid, err },
             'Unhandled error in runForGroup (waiting)',
           ),
         );
+      } else {
+        // No pending work yet — re-enqueue so the group isn't permanently lost,
+        // then skip past it so we still process other groups with work.
+        this.waitingGroups.push(nextJid);
+        skipped++;
       }
-      // If neither pending, skip this group
     }
   }
 
