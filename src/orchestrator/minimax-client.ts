@@ -17,12 +17,13 @@ export async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(
+  let rejectTimer: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    rejectTimer = setTimeout(
       () => reject(new Error(`fetchWithTimeout: ${timeoutMs}ms exceeded`)),
       timeoutMs,
-    ),
-  );
+    );
+  });
 
   try {
     return await Promise.race([
@@ -31,6 +32,7 @@ export async function fetchWithTimeout(
     ]);
   } finally {
     clearTimeout(timer);
+    clearTimeout(rejectTimer!);
   }
 }
 
