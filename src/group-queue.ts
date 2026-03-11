@@ -34,6 +34,7 @@ export class GroupQueue {
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
     null;
   private shuttingDown = false;
+  private retryTimers = new Set<ReturnType<typeof setTimeout>>();
 
   private getGroup(groupJid: string): GroupState {
     let state = this.groups.get(groupJid);
@@ -277,7 +278,8 @@ export class GroupQueue {
       { groupJid, retryCount: state.retryCount, delayMs },
       'Scheduling retry with backoff',
     );
-    setTimeout(() => {
+    const handle = setTimeout(() => {
+      this.retryTimers.delete(handle);
       if (!this.shuttingDown) {
         try {
           this.enqueueMessageCheck(groupJid);
@@ -286,6 +288,7 @@ export class GroupQueue {
         }
       }
     }, delayMs);
+    this.retryTimers.add(handle);
   }
 
   private drainGroup(groupJid: string): void {
@@ -351,6 +354,11 @@ export class GroupQueue {
 
   async shutdown(_gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
+
+    for (const handle of this.retryTimers) {
+      clearTimeout(handle);
+    }
+    this.retryTimers.clear();
 
     // Count active containers but don't kill them — they'll finish on their own
     // via idle timeout or container timeout. The --rm flag cleans them up on exit.
