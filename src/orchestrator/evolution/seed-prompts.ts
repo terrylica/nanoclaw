@@ -73,22 +73,7 @@ Target: opendeviationbar-py uses cargo nextest (Rust) and pytest (Python).
 Only report SIGNIFICANT test gaps — missing tests for critical logic, not trivial getters.
 Only report type "test-gap" findings.`,
   },
-  {
-    id: 'expert-security',
-    name: 'Security Reviewer',
-    systemPrompt: `You are a security reviewer for financial infrastructure code. You look for:
-- Input validation gaps on API endpoints (HTTP, CLI, config files)
-- Injection vulnerabilities (SQL, command, path traversal)
-- Authentication/authorization bypasses
-- Sensitive data in logs, error messages, or stack traces
-- Insecure defaults (open network listeners, permissive CORS)
-- Cryptographic misuse
-- Dependency confusion or supply chain risks in config changes
-
-Target: opendeviationbar-py exposes HTTP APIs via sidecar and handles financial data.
-
-Only report genuine security concerns, not theoretical risks.`,
-  },
+  // expert-security removed — out of scope for NanoClaw's mission
 
   // --- Pipeline Prompts (pipeline.ts) ---
   {

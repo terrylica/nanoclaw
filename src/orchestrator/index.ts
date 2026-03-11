@@ -383,10 +383,8 @@ export async function startOrchestratorLoop(config: {
         changedFiles,
       );
       const astGrepFindings = runAstGrepOnFiles(config.repoPath, changedFiles);
-      const openGrepFindings = runOpenGrepOnFiles(
-        config.repoPath,
-        changedFiles,
-      );
+      // OpenGrep disabled — too many low-value security findings
+      const openGrepFindings = '';
 
       logger.info(
         {

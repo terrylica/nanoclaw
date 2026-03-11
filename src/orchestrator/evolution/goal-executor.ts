@@ -109,19 +109,21 @@ export async function executeGoal(
     // Step 2: Run Claude Code in the worktree
     const startClaude = Date.now();
     const prompt = [
-      `You are fixing a code issue in NanoClaw, a TypeScript/Bun project.`,
+      `You are implementing a small improvement in NanoClaw, a TypeScript/Bun code validation orchestrator.`,
       ``,
-      `Issue: ${goal.text}`,
+      `Task: ${goal.text}`,
       ``,
       `Instructions:`,
-      `- Make the minimal change needed to fix this issue`,
+      `- Read the target file first to understand the existing code`,
+      `- Make the change described in the task — add, modify, or extend the specified function`,
+      `- Keep changes minimal (ideally under 20 lines added/changed)`,
       `- Do NOT modify these protected files:`,
       `  - src/orchestrator/evolution/engine.ts`,
       `  - src/orchestrator/evolution/validator.ts`,
       `  - src/orchestrator/evolution/state.ts`,
       `- Do NOT run bun install or modify node_modules/package.json/bun.lock`,
       `- Ensure the fix compiles (TypeScript strict mode)`,
-      `- If the issue is already fixed or not applicable, make no changes`,
+      `- You MUST make at least one change — the task is an improvement request, not a bug report`,
     ].join('\n');
 
     const claudeResult = spawnSync(

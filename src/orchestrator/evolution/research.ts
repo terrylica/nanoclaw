@@ -62,28 +62,17 @@ const STRATEGIES: ResearchStrategy[] = [
   'contrarian',
 ];
 
-// Seed domains NanoClaw can explore (expanded beyond the original 4)
+// Seed domains — focused on core code review capabilities only.
 const KNOWN_DOMAINS = [
   'ast-grep rules and patterns',
   'semgrep and opengrep rule engineering',
-  'tree-sitter grammar and query patterns',
   'prompt engineering for code review (EvoPrompt, DSPy, GEPA)',
-  'autonomous agent architectures (Reflexion, LATS, Voyager)',
-  'TypeScript compiler API and custom transforms',
-  'Bun runtime optimization and native APIs',
-  'git hook automation and pre-commit frameworks',
   'LLM-as-judge evaluation frameworks',
   'code smell detection and refactoring patterns',
-  'fuzzing and property-based testing for TypeScript',
-  'incremental computation and caching for CI pipelines',
-  'program synthesis and code generation techniques',
-  'multi-agent debate and verification protocols',
-  'developer experience tooling (LSP, diagnostics, codemods)',
-  'WASM-based sandboxing for safe code execution',
-  'knowledge graph construction from codebases',
-  'differential testing and mutation testing',
-  'self-healing systems and auto-remediation patterns',
-  'observability and structured logging best practices',
+  'false positive reduction in automated code review',
+  'Rust-specific bug patterns and common pitfalls',
+  'Python daemon reliability patterns',
+  'financial data processing correctness (NaN, overflow, precision)',
 ];
 
 // --- Channel 1: Firecrawl ---
@@ -275,23 +264,22 @@ Pick 2 topics from areas we have NOT explored yet. Prioritize novelty.`,
 
     serendipity: `${baseContext}
 
-STRATEGY: SERENDIPITY — cross-pollinate from adjacent fields.
-Think beyond code analysis. What techniques from OTHER domains could apply?
-Consider: game AI (MCTS, self-play), biology (genetic algorithms, immune systems),
-distributed systems (consensus, gossip protocols), human factors (cognitive load,
-attention management), NLP (chain-of-thought, retrieval-augmented generation).
-Pick 2 topics from adjacent fields that could transfer to code review automation.`,
+STRATEGY: SERENDIPITY — find practical techniques from other code analysis tools.
+How do other tools solve false-positive reduction, diff prioritization, finding dedup?
+Consider: IDE linters, CI tools, code review platforms, semgrep community rules.
+DO NOT suggest academic techniques (quantum, spectral, topology, formal verification).
+Pick 2 topics DIRECTLY applicable to improving automated code review accuracy.`,
 
     contrarian: `${baseContext}
 
-STRATEGY: CONTRARIAN — challenge our assumptions.
-NanoClaw currently uses: MiniMax for triage, Claude for validation, ast-grep for static analysis.
-What if these are wrong? Search for:
-- Alternatives to LLM-based code review (symbolic analysis, formal verification)
-- Criticisms of autonomous agents (failure modes, when NOT to automate)
-- Anti-patterns in self-modifying systems
-- Cases where simpler tools outperform complex ones
-Pick 2 topics that deliberately challenge NanoClaw's current architecture.`,
+STRATEGY: CONTRARIAN — challenge our approach with PRACTICAL alternatives.
+NanoClaw uses: MiniMax for triage, Claude for validation, ast-grep for static analysis.
+Search for:
+- Better ast-grep/semgrep rule patterns with fewer false positives
+- Better prompt patterns for LLM code review (few-shot, chain-of-thought)
+- Cases where simpler heuristics outperform LLM-based analysis
+DO NOT suggest: formal verification, symbolic execution, quantum anything.
+Pick 2 topics that improve NanoClaw's existing pipeline.`,
   };
 
   return `${strategyPrompts[strategy]}
@@ -535,8 +523,8 @@ NanoClaw is a TypeScript/Bun autonomous code validation orchestrator that:
 Research strategy: ${strategy.toUpperCase()}
 ${strategy === 'exploit' ? 'Go deep on specific tools, libraries, and implementation techniques.' : ''}
 ${strategy === 'explore' ? 'Focus on capabilities NanoClaw does not have yet. Be creative.' : ''}
-${strategy === 'serendipity' ? 'Draw from adjacent fields: game AI, biology, distributed systems, NLP. Find transferable patterns.' : ''}
-${strategy === 'contrarian' ? 'Challenge assumptions. What should NanoClaw stop doing? What simpler alternatives exist?' : ''}
+${strategy === 'serendipity' ? 'Find practical techniques from other code analysis tools. NO academic approaches.' : ''}
+${strategy === 'contrarian' ? 'Practical alternatives only. Better rules, better prompts, better diff analysis. NO academic techniques.' : ''}
 
 Research these topics in depth:
 ${topics.map((t: string) => `- ${t}`).join('\n')}
@@ -598,7 +586,7 @@ Be technical and detailed — we need enough depth for an AI agent to implement 
       'Focus on ALTERNATIVES and CRITICISMS — what should NanoClaw change or stop doing? Score generously for well-reasoned challenges.',
   };
 
-  const synthesisPrompt = `You are synthesizing research findings into implementation-ready goals for NanoClaw (TypeScript/Bun autonomous code validation system).
+  const synthesisPrompt = `You are creating TINY, CONCRETE code improvements for NanoClaw (TypeScript/Bun code validation system).
 
 Strategy: ${strategy.toUpperCase()}
 ${strategyGuidance[strategy]}
@@ -606,18 +594,30 @@ ${strategyGuidance[strategy]}
 Research content:
 ${researchContent}
 
-Return a JSON array of 3-5 goals, ranked by relevance (most relevant first).
-Each goal must be an object with these fields:
-- "goal": An implementation-ready instruction that an AI coding agent can execute in a single session.
-  Format: "In [file or module], [verb] [specific change] to [achieve outcome]"
-  Examples:
-  - "In src/orchestrator/scanning.ts, add tree-sitter query integration for detecting unused TypeScript imports using @tree-sitter/typescript"
-  - "In src/orchestrator/evolution/engine.ts, implement MCTS-based goal prioritization that explores multiple fix strategies before committing"
-  - "Add a new validation gate in goal-validator.ts that runs property-based tests using fast-check to catch edge cases"
-- "relevance": 0.0-1.0 score. Score 0.6+ for any concrete, implementable change. Score 0.8+ for changes that directly improve code quality or add powerful capabilities. Score 0.4+ for novel approaches worth experimenting with.
-- "rationale": One sentence explaining why this improves NanoClaw
+RULES — every goal must be a SMALL change (under 15 lines) to an EXISTING function:
 
-Return ONLY the JSON array, no other text.`;
+ALLOWED functions (use ONLY these exact names):
+- src/orchestrator/triage.ts: triageChanges() — runs ESLint+semgrep, deduplicates, filters by severity
+- src/orchestrator/pipeline.ts: loadFalsePositivePatterns(), runConsensusRound(), runDevilsAdvocateRound(), verifyFindingScript(), validateWithClaude()
+- src/orchestrator/scanning.ts: runAgenticSweep(), runProactiveScan(), runAlgoCorrectnessScan()
+- src/orchestrator/self-validation.ts: runIterativeSelfValidation() — 3-round validation
+- src/orchestrator/static-analysis.ts: runAstGrepOnFiles(), runEslintOnFiles(), runSemgrepOnFiles(), getSemanticDiffs()
+- src/orchestrator/minimax-client.ts: parseMiniMaxFindings(), deduplicateFindings(), severityRank()
+
+BANNED: new files, new functions, academic techniques, security, observability, scaffolding.
+
+Each goal must be a SMALL, CONCRETE change like:
+- "Add an early-return in X() when Y condition is true"
+- "Change the comparison in X() from title-only to title+file"
+- "Add a .filter() call in X() to skip findings where Z"
+- "Increase the threshold in X() from 0.35 to 0.5"
+
+Return a JSON array of 2 goals:
+- "goal": "In src/orchestrator/[file].ts, modify [function]() to [1-sentence concrete change]"
+- "relevance": 0.0-1.0
+- "rationale": one sentence
+
+Return ONLY the JSON array.`;
 
   let rankedGoals: RankedGoal[] = [];
   try {
