@@ -376,7 +376,7 @@ export async function runContainerAgent(
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
             }
-            hadStreamingOutput = true;
+            lastOutputTime = Date.now();
             // Activity detected — reset the hard timeout
             resetTimeout();
             // Call onOutput for all markers (including null results)
@@ -430,7 +430,7 @@ export async function runContainerAgent(
     });
 
     let timedOut = false;
-    let hadStreamingOutput = false;
+    let lastOutputTime: number | null = null;
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
@@ -477,14 +477,17 @@ export async function runContainerAgent(
             `Container: ${containerName}`,
             `Duration: ${duration}ms`,
             `Exit Code: ${code}`,
-            `Had Streaming Output: ${hadStreamingOutput}`,
+            `Last Output Time: ${lastOutputTime !== null ? new Date(lastOutputTime).toISOString() : 'none'}`,
           ].join('\n'),
         );
 
-        // Timeout after output = idle cleanup, not failure.
-        // The agent already sent its response; this is just the
-        // container being reaped after the idle period expired.
-        if (hadStreamingOutput) {
+        // Timeout shortly after output = idle cleanup (agent sent its response,
+        // container reaped after idle period). Timeout long after last output
+        // (or with no output at all) = real hang — treat as failure.
+        const idleCleanup =
+          lastOutputTime !== null &&
+          Date.now() - lastOutputTime <= IDLE_TIMEOUT + 60_000;
+        if (idleCleanup) {
           logger.info(
             { group: group.name, containerName, duration, code },
             'Container timed out after output (idle cleanup)',
