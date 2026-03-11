@@ -85,12 +85,20 @@ export function startIpcWatcher(deps: IpcDeps): void {
               { file, sourceGroup, err: parseErr },
               'Error parsing IPC message file',
             );
-            const errorDir = path.join(ipcBaseDir, 'errors');
-            await fs.promises.mkdir(errorDir, { recursive: true });
-            await fs.promises.rename(
-              filePath,
-              path.join(errorDir, `${sourceGroup}-${file}`),
-            );
+            try {
+              const errorDir = path.join(ipcBaseDir, 'errors');
+              await fs.promises.mkdir(errorDir, { recursive: true });
+              await fs.promises.rename(
+                filePath,
+                path.join(errorDir, `${sourceGroup}-${file}`),
+              );
+            } catch (renameErr) {
+              logger.error(
+                { file, sourceGroup, err: renameErr },
+                'Error moving bad IPC message file to errors dir, deleting instead',
+              );
+              await fs.promises.unlink(filePath).catch(() => undefined);
+            }
             continue;
           }
           try {
@@ -157,12 +165,20 @@ export function startIpcWatcher(deps: IpcDeps): void {
               { file, sourceGroup, err },
               'Error processing IPC task',
             );
-            const errorDir = path.join(ipcBaseDir, 'errors');
-            await fs.promises.mkdir(errorDir, { recursive: true });
-            await fs.promises.rename(
-              filePath,
-              path.join(errorDir, `${sourceGroup}-${file}`),
-            );
+            try {
+              const errorDir = path.join(ipcBaseDir, 'errors');
+              await fs.promises.mkdir(errorDir, { recursive: true });
+              await fs.promises.rename(
+                filePath,
+                path.join(errorDir, `${sourceGroup}-${file}`),
+              );
+            } catch (renameErr) {
+              logger.error(
+                { file, sourceGroup, err: renameErr },
+                'Error moving failed IPC task file to errors dir, deleting instead',
+              );
+              await fs.promises.unlink(filePath).catch(() => undefined);
+            }
           }
         }
       } catch (err) {
