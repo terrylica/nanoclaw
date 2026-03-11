@@ -286,7 +286,11 @@ export async function executeGoal(
   } finally {
     // Always cleanup worktree
     if (worktreePath && branch) {
-      cleanupWorktree(worktreePath, branch, SELF_REPO);
+      try {
+        cleanupWorktree(worktreePath, branch, SELF_REPO);
+      } catch (cleanupErr) {
+        logger.warn({ err: cleanupErr, worktreePath, branch }, 'Worktree cleanup failed — branch may need manual removal');
+      }
     }
 
     // Guard: if node_modules in main repo became a symlink (Claude Code in worktree
