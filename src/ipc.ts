@@ -162,7 +162,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
         for (const file of taskFiles) {
           const filePath = path.join(tasksDir, file);
           try {
-            const data = JSON.parse(await fs.promises.readFile(filePath, 'utf-8'));
+            const parsed: unknown = JSON.parse(await fs.promises.readFile(filePath, 'utf-8'));
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+              logger.error({ file, sourceGroup }, 'IPC task file is not a JSON object, skipping');
+              await fs.promises.unlink(filePath);
+              continue;
+            }
+            const data = parsed as Parameters<typeof processTaskIpc>[0];
             // Pass source group identity to processTaskIpc for authorization
             await processTaskIpc(data, sourceGroup, isMain, deps);
             await fs.promises.unlink(filePath);
