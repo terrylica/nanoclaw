@@ -4,7 +4,7 @@
  * Periodically checks open issues for relevance, suggests closing
  * resolved ones, and identifies issues NanoClaw can help with.
  */
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 
 import { logger } from '../../logger.js';
 import { queryMiniMax } from '../minimax-client.js';
@@ -25,11 +25,13 @@ interface GitHubIssue {
 /** Fetch open issues from GitHub */
 export function fetchOpenIssues(githubRepo: string): GitHubIssue[] {
   try {
-    const result = execSync(
-      `gh issue list --repo ${githubRepo} --state open --json number,title,body,labels,createdAt --limit 30`,
+    const result = spawnSync(
+      'gh',
+      ['issue', 'list', '--repo', githubRepo, '--state', 'open', '--json', 'number,title,body,labels,createdAt', '--limit', '30'],
       { encoding: 'utf-8', timeout: 60_000 },
     );
-    return JSON.parse(result);
+    if (result.status !== 0) throw new Error(result.stderr);
+    return JSON.parse(result.stdout);
   } catch (err) {
     logger.warn({ err }, 'Failed to fetch open issues');
     return [];
@@ -101,8 +103,9 @@ export async function checkIssueLandscape(
       possiblyResolved++;
       // Comment on issue suggesting closure
       try {
-        execSync(
-          `gh issue comment ${issue.number} --repo ${githubRepo} --body "NanoClaw analysis suggests this issue may have been addressed: ${result.reason.replace(/"/g, '\\"')}"`,
+        spawnSync(
+          'gh',
+          ['issue', 'comment', String(issue.number), '--repo', githubRepo, '--body', `NanoClaw analysis suggests this issue may have been addressed: ${result.reason}`],
           { encoding: 'utf-8', timeout: 60_000 },
         );
       } catch {
