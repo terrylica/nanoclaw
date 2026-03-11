@@ -236,7 +236,9 @@ function buildTopicPrompt(
   const domainEntries = Object.entries(explorationMap);
   const highYield = domainEntries
     .filter(([, d]) => d.goalsQueued > 0)
-    .sort(([, a], [, b]) => b.goalsQueued / b.searches - a.goalsQueued / a.searches)
+    .sort(
+      ([, a], [, b]) => b.goalsQueued / b.searches - a.goalsQueued / a.searches,
+    )
     .slice(0, 5)
     .map(([domain, d]) => `${domain} (${d.goalsQueued}/${d.searches} yield)`)
     .join(', ');
@@ -564,27 +566,10 @@ Be technical and detailed — we need enough depth for an AI agent to implement 
     );
   }
 
-  // Optional enhancement: try Claude WebSearch for ONE topic only (reduces
-  // spawnSync blockage from 10min to 5min max). Only attempt if MiniMax
-  // succeeded (so synthesis won't fail from stale connections).
-  if (results.length > 0) {
-    const explorationContext = buildExplorationContext(
-      explorationMap,
-      pastTopics,
-    );
-    const claudeResult = await researchQuery(
-      topics[0],
-      strategy,
-      explorationContext,
-    );
-    if (claudeResult.source !== 'failed') {
-      results.push(claudeResult);
-      logger.info(
-        { query: topics[0].slice(0, 50), strategy },
-        'Claude WebSearch enhanced research',
-      );
-    }
-  }
+  // NOTE: Claude WebSearch enhancement disabled. spawnSync blocks the Node.js
+  // event loop for minutes, causing subsequent MiniMax fetch calls to fail with
+  // "TypeError: fetch failed". MiniMax primary research produces sufficient
+  // content (14KB+). Re-enable once we switch to spawn (async) or Worker threads.
 
   // If even the fallback produced nothing, update map and return empty
   if (results.length === 0) {
@@ -638,10 +623,19 @@ Return ONLY the JSON array, no other text.`;
 
   let rankedGoals: RankedGoal[] = [];
   try {
-    const synthesisResponse = await queryMiniMax(synthesisPrompt, apiKey, '', 120_000);
+    const synthesisResponse = await queryMiniMax(
+      synthesisPrompt,
+      apiKey,
+      '',
+      120_000,
+    );
     rankedGoals = parseRankedGoals(synthesisResponse);
     logger.info(
-      { strategy, parsedCount: rankedGoals.length, rawLen: synthesisResponse.length },
+      {
+        strategy,
+        parsedCount: rankedGoals.length,
+        rawLen: synthesisResponse.length,
+      },
       'Synthesis produced ranked goals',
     );
   } catch (err) {
