@@ -54,10 +54,10 @@ interface VolumeMount {
   readonly: boolean;
 }
 
-function buildVolumeMounts(
+async function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
-): VolumeMount[] {
+): Promise<VolumeMount[]> {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
   const groupDir = resolveGroupFolderPath(group.folder);
@@ -152,7 +152,7 @@ function buildVolumeMounts(
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
       const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
+      await fs.promises.cp(srcDir, dstDir, { recursive: true });
     }
   }
   mounts.push({
@@ -266,7 +266,7 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
+  const mounts = await buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName);
