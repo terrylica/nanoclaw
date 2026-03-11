@@ -521,6 +521,7 @@ async function stepResearch(
 
     return action;
   } catch (err) {
+    logger.warn({ err, strategy: strategyName }, 'Research step failed');
     updateAction(action, 'failed', { result: String(err).slice(0, 200) });
     return null;
   }
