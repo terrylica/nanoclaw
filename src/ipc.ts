@@ -52,7 +52,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
       baseDirErrorCount++;
       const backoffMs = Math.min(IPC_POLL_INTERVAL * 2 ** (baseDirErrorCount - 1), MAX_BACKOFF_MS);
       logger.error({ err, backoffMs }, 'Error reading IPC base directory');
-      setTimeout(processIpcFiles, backoffMs);
+      setTimeout(() => { processIpcFiles().catch(e => logger.error({ err: e }, 'Unhandled error in processIpcFiles')); }, backoffMs);
       return;
     }
 
@@ -204,10 +204,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
       }
     }
 
-    setTimeout(processIpcFiles, IPC_POLL_INTERVAL);
+    setTimeout(() => { processIpcFiles().catch(e => logger.error({ err: e }, 'Unhandled error in processIpcFiles')); }, IPC_POLL_INTERVAL);
   };
 
-  processIpcFiles();
+  processIpcFiles().catch(e => logger.error({ err: e }, 'Unhandled error in processIpcFiles'));
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
