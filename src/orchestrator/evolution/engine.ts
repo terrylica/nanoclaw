@@ -362,7 +362,9 @@ async function stepGoalExecution(
 
   // If rate limited, keep goal in queue and signal caller to pause
   if (result.rateLimited) {
-    logger.warn('Claude API rate limited — keeping goal in queue, pausing evolution');
+    logger.warn(
+      'Claude API rate limited — keeping goal in queue, pausing evolution',
+    );
     return result.action;
   }
 

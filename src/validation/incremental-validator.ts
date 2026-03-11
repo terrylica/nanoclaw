@@ -40,9 +40,14 @@ export class IncrementalValidator {
       tsBuildInfoFile: this.tsBuildInfoFile,
     };
 
-    const rootNames = changedFiles && changedFiles.length > 0
-      ? this.resolveChangedFilesWithDependents(changedFiles, parsedConfig.fileNames, compilerOptions)
-      : parsedConfig.fileNames;
+    const rootNames =
+      changedFiles && changedFiles.length > 0
+        ? this.resolveChangedFilesWithDependents(
+            changedFiles,
+            parsedConfig.fileNames,
+            compilerOptions,
+          )
+        : parsedConfig.fileNames;
 
     const program = ts.createProgram({
       rootNames,
@@ -76,7 +81,7 @@ export class IncrementalValidator {
       options,
     });
 
-    const changedSet = new Set(changedFiles.map(f => path.resolve(f)));
+    const changedSet = new Set(changedFiles.map((f) => path.resolve(f)));
     const affected = new Set<string>(changedSet);
 
     // Walk all source files and find those that import any changed file
@@ -97,16 +102,18 @@ export class IncrementalValidator {
     return Array.from(affected);
   }
 
-  private collectImports(sourceFile: ts.SourceFile, program: ts.Program): string[] {
+  private collectImports(
+    sourceFile: ts.SourceFile,
+    program: ts.Program,
+  ): string[] {
     const result: string[] = [];
     const checker = program.getTypeChecker();
 
     const visit = (node: ts.Node): void => {
-      if (
-        ts.isImportDeclaration(node) ||
-        ts.isExportDeclaration(node)
-      ) {
-        const moduleSpecifier = (node as ts.ImportDeclaration | ts.ExportDeclaration).moduleSpecifier;
+      if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+        const moduleSpecifier = (
+          node as ts.ImportDeclaration | ts.ExportDeclaration
+        ).moduleSpecifier;
         if (moduleSpecifier && ts.isStringLiteral(moduleSpecifier)) {
           const symbol = checker.getSymbolAtLocation(moduleSpecifier);
           const declarations = symbol?.getDeclarations();

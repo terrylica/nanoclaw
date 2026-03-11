@@ -7,9 +7,9 @@
  * cosine scan, which is sufficient for small-to-medium corpora.
  */
 
-import { pipeline, type FeatureExtractionPipeline } from "@xenova/transformers";
+import { pipeline, type FeatureExtractionPipeline } from '@xenova/transformers';
 
-const MODEL = "Xenova/codebert-base";
+const MODEL = 'Xenova/codebert-base';
 const DIMENSION = 768;
 
 export interface SimilarityResult {
@@ -27,7 +27,11 @@ interface IndexEntry {
 /**
  * Mean-pool a 2-D tensor output (tokens × hidden) into a single 768-dim vector.
  */
-function meanPool(data: Float32Array, tokenCount: number, hiddenSize: number): Float32Array {
+function meanPool(
+  data: Float32Array,
+  tokenCount: number,
+  hiddenSize: number,
+): Float32Array {
   const result = new Float32Array(hiddenSize);
   for (let t = 0; t < tokenCount; t++) {
     const offset = t * hiddenSize;
@@ -64,7 +68,10 @@ export class EmbeddingService {
   /** Lazily initialise the transformers pipeline. */
   private async getExtractor(): Promise<FeatureExtractionPipeline> {
     if (!this.extractor) {
-      this.extractor = (await pipeline("feature-extraction", MODEL)) as FeatureExtractionPipeline;
+      this.extractor = (await pipeline(
+        'feature-extraction',
+        MODEL,
+      )) as FeatureExtractionPipeline;
     }
     return this.extractor;
   }
@@ -75,14 +82,14 @@ export class EmbeddingService {
   async embed(text: string): Promise<Float32Array> {
     const extractor = await this.getExtractor();
     // Output shape: [1, tokenCount, hiddenSize]
-    const output = await extractor(text, { pooling: "none" });
+    const output = await extractor(text, { pooling: 'none' });
     const raw = output.data as Float32Array;
     const tokenCount = output.dims[1] as number;
     const hiddenSize = output.dims[2] as number;
 
     if (hiddenSize !== DIMENSION) {
       throw new Error(
-        `Expected hidden size ${DIMENSION} but got ${hiddenSize} from ${MODEL}`
+        `Expected hidden size ${DIMENSION} but got ${hiddenSize} from ${MODEL}`,
       );
     }
 
@@ -95,7 +102,7 @@ export class EmbeddingService {
   async add(
     id: string,
     text: string,
-    metadata?: Record<string, string | number | boolean>
+    metadata?: Record<string, string | number | boolean>,
   ): Promise<void> {
     const vector = await this.embed(text);
     // Replace if id already exists

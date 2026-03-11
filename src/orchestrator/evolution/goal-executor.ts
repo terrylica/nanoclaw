@@ -165,9 +165,9 @@ export async function executeGoal(
 
     // Step 3: Detect Claude API rate limit — pause evolution instead of burning cycles
     if (
-      claudeOutput.includes("hit your limit") ||
-      claudeOutput.includes("resets ") ||
-      claudeOutput.includes("rate limit")
+      claudeOutput.includes('hit your limit') ||
+      claudeOutput.includes('resets ') ||
+      claudeOutput.includes('rate limit')
     ) {
       updateAction(action, 'failed', {
         result: `Claude API rate limited: ${claudeOutput.slice(0, 200)}`,

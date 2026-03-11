@@ -43,16 +43,28 @@ export function startIpcWatcher(deps: IpcDeps): void {
     // Scan all group IPC directories (identity determined by directory)
     let groupFolders: string[];
     try {
-      const entries = (await fs.promises.readdir(ipcBaseDir, { withFileTypes: true })) as Array<{ isDirectory(): boolean; name: string }>;
+      const entries = (await fs.promises.readdir(ipcBaseDir, {
+        withFileTypes: true,
+      })) as Array<{ isDirectory(): boolean; name: string }>;
       groupFolders = entries
-        .filter((e: { isDirectory(): boolean; name: string }) => e.isDirectory() && e.name !== 'errors')
+        .filter(
+          (e: { isDirectory(): boolean; name: string }) =>
+            e.isDirectory() && e.name !== 'errors',
+        )
         .map((e: { name: string }) => e.name);
       baseDirErrorCount = 0;
     } catch (err) {
       baseDirErrorCount++;
-      const backoffMs = Math.min(IPC_POLL_INTERVAL * 2 ** (baseDirErrorCount - 1), MAX_BACKOFF_MS);
+      const backoffMs = Math.min(
+        IPC_POLL_INTERVAL * 2 ** (baseDirErrorCount - 1),
+        MAX_BACKOFF_MS,
+      );
       logger.error({ err, backoffMs }, 'Error reading IPC base directory');
-      setTimeout(() => { processIpcFiles().catch(e => logger.error({ err: e }, 'Unhandled error in processIpcFiles')); }, backoffMs);
+      setTimeout(() => {
+        processIpcFiles().catch((e) =>
+          logger.error({ err: e }, 'Unhandled error in processIpcFiles'),
+        );
+      }, backoffMs);
       return;
     }
 
@@ -77,7 +89,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
           messageFiles = allFiles.filter((f: string) => f.endsWith('.json'));
         } catch (err) {
           if ((err as { code?: string }).code !== 'ENOENT') {
-            logger.error({ err, sourceGroup }, 'Error reading IPC messages directory');
+            logger.error(
+              { err, sourceGroup },
+              'Error reading IPC messages directory',
+            );
           }
           messageFiles = [];
         }
@@ -161,16 +176,28 @@ export function startIpcWatcher(deps: IpcDeps): void {
           taskFiles = allFiles.filter((f: string) => f.endsWith('.json'));
         } catch (err) {
           if ((err as { code?: string }).code !== 'ENOENT') {
-            logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
+            logger.error(
+              { err, sourceGroup },
+              'Error reading IPC tasks directory',
+            );
           }
           taskFiles = [];
         }
         for (const file of taskFiles) {
           const filePath = path.join(tasksDir, file);
           try {
-            const parsed: unknown = JSON.parse(await fs.promises.readFile(filePath, 'utf-8'));
-            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-              logger.error({ file, sourceGroup }, 'IPC task file is not a JSON object, skipping');
+            const parsed: unknown = JSON.parse(
+              await fs.promises.readFile(filePath, 'utf-8'),
+            );
+            if (
+              typeof parsed !== 'object' ||
+              parsed === null ||
+              Array.isArray(parsed)
+            ) {
+              logger.error(
+                { file, sourceGroup },
+                'IPC task file is not a JSON object, skipping',
+              );
               await fs.promises.unlink(filePath);
               continue;
             }
@@ -204,10 +231,16 @@ export function startIpcWatcher(deps: IpcDeps): void {
       }
     }
 
-    setTimeout(() => { processIpcFiles().catch(e => logger.error({ err: e }, 'Unhandled error in processIpcFiles')); }, IPC_POLL_INTERVAL);
+    setTimeout(() => {
+      processIpcFiles().catch((e) =>
+        logger.error({ err: e }, 'Unhandled error in processIpcFiles'),
+      );
+    }, IPC_POLL_INTERVAL);
   };
 
-  processIpcFiles().catch(e => logger.error({ err: e }, 'Unhandled error in processIpcFiles'));
+  processIpcFiles().catch((e) =>
+    logger.error({ err: e }, 'Unhandled error in processIpcFiles'),
+  );
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
@@ -246,7 +279,10 @@ export async function processTaskIpc(
       ) {
         // Resolve the target group from JID
         if (typeof data.targetJid !== 'string') {
-          logger.warn({ targetJid: data.targetJid }, 'Invalid IPC payload: targetJid must be a string');
+          logger.warn(
+            { targetJid: data.targetJid },
+            'Invalid IPC payload: targetJid must be a string',
+          );
           break;
         }
         const targetJid = data.targetJid;

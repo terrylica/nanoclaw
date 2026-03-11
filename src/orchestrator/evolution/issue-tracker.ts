@@ -27,7 +27,18 @@ export function fetchOpenIssues(githubRepo: string): GitHubIssue[] {
   try {
     const result = spawnSync(
       'gh',
-      ['issue', 'list', '--repo', githubRepo, '--state', 'open', '--json', 'number,title,body,labels,createdAt', '--limit', '30'],
+      [
+        'issue',
+        'list',
+        '--repo',
+        githubRepo,
+        '--state',
+        'open',
+        '--json',
+        'number,title,body,labels,createdAt',
+        '--limit',
+        '30',
+      ],
       { encoding: 'utf-8', timeout: 60_000 },
     );
     if (result.status !== 0) throw new Error(result.stderr);
@@ -105,7 +116,15 @@ export async function checkIssueLandscape(
       try {
         spawnSync(
           'gh',
-          ['issue', 'comment', String(issue.number), '--repo', githubRepo, '--body', `NanoClaw analysis suggests this issue may have been addressed: ${result.reason}`],
+          [
+            'issue',
+            'comment',
+            String(issue.number),
+            '--repo',
+            githubRepo,
+            '--body',
+            `NanoClaw analysis suggests this issue may have been addressed: ${result.reason}`,
+          ],
           { encoding: 'utf-8', timeout: 60_000 },
         );
       } catch {

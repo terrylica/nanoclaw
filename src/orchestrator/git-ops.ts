@@ -43,7 +43,17 @@ export function getGitBranch(repoPath: string): string {
 export function getDiff(repoPath: string, sinceCommit: string): string {
   const result = spawnSync(
     'git',
-    ['diff', `${sinceCommit}..HEAD`, '--stat', '--unified=5', '--', '*.ts', '*.json', '*.yaml', '*.yml'],
+    [
+      'diff',
+      `${sinceCommit}..HEAD`,
+      '--stat',
+      '--unified=5',
+      '--',
+      '*.ts',
+      '*.json',
+      '*.yaml',
+      '*.yml',
+    ],
     { cwd: repoPath, encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 },
   );
   if (result.error || result.status !== 0) {
@@ -59,11 +69,23 @@ export function getChangedFiles(
 ): string[] {
   const result = spawnSync(
     'git',
-    ['diff', `${sinceCommit}..HEAD`, '--name-only', '--', '*.ts', '*.json', '*.yaml', '*.yml'],
+    [
+      'diff',
+      `${sinceCommit}..HEAD`,
+      '--name-only',
+      '--',
+      '*.ts',
+      '*.json',
+      '*.yaml',
+      '*.yml',
+    ],
     { cwd: repoPath, encoding: 'utf-8' },
   );
   if (result.error || result.status !== 0) {
-    logger.error({ err: result.error ?? result.stderr }, 'git diff --name-only failed');
+    logger.error(
+      { err: result.error ?? result.stderr },
+      'git diff --name-only failed',
+    );
     return [];
   }
   return result.stdout

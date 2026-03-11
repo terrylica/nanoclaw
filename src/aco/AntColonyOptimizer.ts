@@ -71,7 +71,9 @@ export class AntColonyOptimizer {
    */
   selectNext(current: string, candidates: string[]): string {
     if (candidates.length === 0) {
-      throw new Error('AntColonyOptimizer.selectNext: candidates must not be empty');
+      throw new Error(
+        'AntColonyOptimizer.selectNext: candidates must not be empty',
+      );
     }
     if (candidates.length === 1) {
       return candidates[0]!;
@@ -123,7 +125,8 @@ export class AntColonyOptimizer {
    * Higher heuristic = more attractive when pheromone trails are equal.
    */
   setHeuristic(rule: string, value: number): void {
-    if (value <= 0) throw new RangeError(`Heuristic must be positive, got ${value}`);
+    if (value <= 0)
+      throw new RangeError(`Heuristic must be positive, got ${value}`);
     this.heuristics.set(rule, value);
   }
 

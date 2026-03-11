@@ -119,7 +119,10 @@ export async function getWorktreeDiff(worktreePath: string): Promise<string> {
   const untrackedDiffs = await Promise.all(
     files.map(async (file) => {
       try {
-        const content = await fs.promises.readFile(path.join(worktreePath, file), 'utf-8');
+        const content = await fs.promises.readFile(
+          path.join(worktreePath, file),
+          'utf-8',
+        );
         return `--- /dev/null\n+++ b/${file}\n${content
           .split('\n')
           .map((l) => `+${l}`)
@@ -227,7 +230,10 @@ export function cleanupWorktree(
     // Fallback: force remove directory
     try {
       fs.rmSync(worktreePath, { recursive: true, force: true });
-      execFileSync('git', ['worktree', 'prune'], { cwd: repoPath, timeout: 10_000 });
+      execFileSync('git', ['worktree', 'prune'], {
+        cwd: repoPath,
+        timeout: 10_000,
+      });
     } catch {
       /* best effort */
     }

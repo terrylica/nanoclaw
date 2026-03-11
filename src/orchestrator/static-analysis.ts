@@ -256,9 +256,7 @@ export function runEslintOnFiles(
 ): Finding[] {
   // Prefer project-local eslint, fall back to env var / system eslint
   const localEslint = path.join(repoPath, 'node_modules/.bin/eslint');
-  const eslintBin = fs.existsSync(localEslint)
-    ? localEslint
-    : ESLINT_BINARY;
+  const eslintBin = fs.existsSync(localEslint) ? localEslint : ESLINT_BINARY;
 
   // Only run if ESLint has a config in the repo (avoids noisy no-config runs)
   const hasConfig = [
@@ -352,7 +350,10 @@ export function runSemgrepOnFiles(
     timeout: 10_000,
   });
   if (versionCheck.error || versionCheck.status !== 0) {
-    logger.info({ binary: SEMGREP_BINARY }, 'semgrep binary not available, skipping');
+    logger.info(
+      { binary: SEMGREP_BINARY },
+      'semgrep binary not available, skipping',
+    );
     return [];
   }
 

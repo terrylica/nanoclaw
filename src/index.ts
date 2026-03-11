@@ -103,9 +103,11 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   setRegisteredGroup(jid, group);
 
   // Create group folder (async to avoid blocking the event loop)
-  fs.promises.mkdir(path.join(groupDir, 'logs'), { recursive: true }).catch((err) => {
-    logger.warn({ jid, err }, 'Failed to create group logs directory');
-  });
+  fs.promises
+    .mkdir(path.join(groupDir, 'logs'), { recursive: true })
+    .catch((err) => {
+      logger.warn({ jid, err }, 'Failed to create group logs directory');
+    });
 
   logger.info(
     { jid, name: group.name, folder: group.folder },
@@ -436,9 +438,14 @@ async function startMessageLoop(): Promise<void> {
             saveState();
             // Show typing indicator while the container processes the piped message
             if (channel.setTyping) {
-              channel.setTyping(chatJid, true).catch((err) =>
-                logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
-              );
+              channel
+                .setTyping(chatJid, true)
+                .catch((err) =>
+                  logger.warn(
+                    { chatJid, err },
+                    'Failed to set typing indicator',
+                  ),
+                );
             }
           } else {
             // No active container — enqueue for a new one

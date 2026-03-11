@@ -176,9 +176,16 @@ export class GroupQueue {
       return true;
     } catch (err) {
       if (tempPath) {
-        try { fs.unlinkSync(tempPath); } catch { /* already gone or never written */ }
+        try {
+          fs.unlinkSync(tempPath);
+        } catch {
+          /* already gone or never written */
+        }
       }
-      logger.error({ groupJid, err }, 'Failed to write IPC message file, message dropped');
+      logger.error(
+        { groupJid, err },
+        'Failed to write IPC message file, message dropped',
+      );
       return false;
     }
   }

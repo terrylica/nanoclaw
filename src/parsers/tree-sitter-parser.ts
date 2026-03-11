@@ -66,7 +66,7 @@ export function parseFile(filePath: string): ParseResult {
   // tree-sitter parse exits 0 even with ERROR nodes; detect them in output
   const errorLines = ast
     .split('\n')
-    .filter(line => line.includes('(ERROR') || line.includes('(MISSING'));
+    .filter((line) => line.includes('(ERROR') || line.includes('(MISSING'));
 
   return {
     success: errorLines.length === 0,
@@ -106,7 +106,11 @@ export function runQuery(filePath: string, queryPattern: string): QueryResult {
 
     return { success: true, matches: parseQueryOutput(output) };
   } finally {
-    try { fs.unlinkSync(tmpQuery); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(tmpQuery);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -139,7 +143,9 @@ function parseQueryOutput(output: string): QueryMatch[] {
     // Node position line: "      node_type [row, col] - [row, col]"
     // Also handles: "        text: \"...\""
     if (currentCapture !== null) {
-      const posMatch = line.match(/\[(\d+),\s*(\d+)\]\s*-\s*\[(\d+),\s*(\d+)\]/);
+      const posMatch = line.match(
+        /\[(\d+),\s*(\d+)\]\s*-\s*\[(\d+),\s*(\d+)\]/,
+      );
       if (posMatch) {
         // Extract the text fragment between the position markers if present
         const textMatch = line.match(/^\s+\S.*?\[.*\]\s*-\s*\[.*\]\s*(.*)?$/);

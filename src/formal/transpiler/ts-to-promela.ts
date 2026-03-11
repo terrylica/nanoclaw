@@ -35,7 +35,12 @@ export class TsToPromelaTranspiler {
 
   constructor(source: string, fileName = 'input.ts') {
     this.source = source;
-    this.sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.ES2022, true);
+    this.sourceFile = ts.createSourceFile(
+      fileName,
+      source,
+      ts.ScriptTarget.ES2022,
+      true,
+    );
   }
 
   /** Convenience factory: read file from disk then construct transpiler */
@@ -58,7 +63,8 @@ export class TsToPromelaTranspiler {
 
     if (asyncFunctions.length === 0) {
       return {
-        promela: '/* No async functions found — no Promela model generated */\n',
+        promela:
+          '/* No async functions found — no Promela model generated */\n',
         asyncFunctions,
         errors,
       };
@@ -75,7 +81,9 @@ export class TsToPromelaTranspiler {
     }
 
     lines.push('/* Auto-generated Promela model from TypeScript source */');
-    lines.push('/* Verify with: spin -a model.pml && gcc -o pan pan.c && ./pan */');
+    lines.push(
+      '/* Verify with: spin -a model.pml && gcc -o pan pan.c && ./pan */',
+    );
     lines.push('');
 
     for (const ch of allChannels) {
@@ -95,7 +103,9 @@ export class TsToPromelaTranspiler {
 
       // Model Promise.all as inline parallel runs (approximated via atomic)
       for (let i = 0; i < fn.promiseAllSites; i++) {
-        lines.push(`  /* Promise.all site ${i + 1} — parallel tasks complete atomically */`);
+        lines.push(
+          `  /* Promise.all site ${i + 1} — parallel tasks complete atomically */`,
+        );
         lines.push(`  atomic { skip };`);
       }
 
@@ -128,7 +138,11 @@ export class TsToPromelaTranspiler {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  private visitNode(node: ts.Node, results: AsyncFunction[], currentFn: AsyncFunction | null): void {
+  private visitNode(
+    node: ts.Node,
+    results: AsyncFunction[],
+    currentFn: AsyncFunction | null,
+  ): void {
     const isAsyncFn = this.isAsyncFunctionNode(node);
 
     if (isAsyncFn) {
@@ -141,7 +155,9 @@ export class TsToPromelaTranspiler {
       };
       results.push(fn);
       // Recurse with this function as context
-      ts.forEachChild(node, (child: ts.Node) => this.visitNode(child, results, fn));
+      ts.forEachChild(node, (child: ts.Node) =>
+        this.visitNode(child, results, fn),
+      );
       return;
     }
 
@@ -156,7 +172,10 @@ export class TsToPromelaTranspiler {
       }
 
       // Detect channel-like calls: x.send(...) / x.recv(...) / x.receive(...)
-      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression)
+      ) {
         const prop = node.expression.name.text;
         const obj = node.expression.expression.getText(this.sourceFile);
         if (prop === 'send' || prop === 'write' || prop === 'push') {
@@ -167,7 +186,9 @@ export class TsToPromelaTranspiler {
       }
     }
 
-    ts.forEachChild(node, (child: ts.Node) => this.visitNode(child, results, currentFn));
+    ts.forEachChild(node, (child: ts.Node) =>
+      this.visitNode(child, results, currentFn),
+    );
   }
 
   private isAsyncFunctionNode(node: ts.Node): boolean {
@@ -177,8 +198,13 @@ export class TsToPromelaTranspiler {
       ts.isArrowFunction(node) ||
       ts.isMethodDeclaration(node)
     ) {
-      const mods = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
-      return mods?.some((m: ts.Modifier) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      const mods = ts.canHaveModifiers(node)
+        ? ts.getModifiers(node)
+        : undefined;
+      return (
+        mods?.some((m: ts.Modifier) => m.kind === ts.SyntaxKind.AsyncKeyword) ??
+        false
+      );
     }
     return false;
   }
@@ -190,10 +216,16 @@ export class TsToPromelaTranspiler {
     if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) {
       return node.name.text;
     }
-    if (ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)) {
+    if (
+      ts.isVariableDeclaration(node.parent) &&
+      ts.isIdentifier(node.parent.name)
+    ) {
       return node.parent.name.text;
     }
-    if (ts.isPropertyDeclaration(node.parent) && ts.isIdentifier(node.parent.name)) {
+    if (
+      ts.isPropertyDeclaration(node.parent) &&
+      ts.isIdentifier(node.parent.name)
+    ) {
       return node.parent.name.text;
     }
     // Fallback: use source position for uniqueness

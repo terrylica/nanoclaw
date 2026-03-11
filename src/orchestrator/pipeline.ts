@@ -54,11 +54,27 @@ export function syncFalsePositivePatterns(): void {
   try {
     const spawnResult = spawnSync(
       'gh',
-      ['issue', 'list', '--repo', _targetRepo, '--label', 'nanoclaw', '--state', 'closed', '--json', 'title,state', '--limit', '50'],
+      [
+        'issue',
+        'list',
+        '--repo',
+        _targetRepo,
+        '--label',
+        'nanoclaw',
+        '--state',
+        'closed',
+        '--json',
+        'title,state',
+        '--limit',
+        '50',
+      ],
       { encoding: 'utf-8', timeout: 60_000 },
     );
     if (spawnResult.error) throw spawnResult.error;
-    if (spawnResult.status !== 0) throw new Error(spawnResult.stderr || `gh exited with status ${spawnResult.status}`);
+    if (spawnResult.status !== 0)
+      throw new Error(
+        spawnResult.stderr || `gh exited with status ${spawnResult.status}`,
+      );
     const result = spawnResult.stdout;
     const issues = JSON.parse(result) as Array<{
       title: string;
@@ -311,7 +327,11 @@ export function verifyFindingScript(
     }
     if (spawnResult.status !== 0) {
       logger.info(
-        { title: finding.title, cmd: cmd.slice(0, 80), status: spawnResult.status },
+        {
+          title: finding.title,
+          cmd: cmd.slice(0, 80),
+          status: spawnResult.status,
+        },
         'Verification script failed — finding likely hallucinated',
       );
       return {

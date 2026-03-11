@@ -105,7 +105,9 @@ function ensureNodeModules(): void {
   try {
     const stat = fs.lstatSync(nmPath);
     if (stat.isSymbolicLink()) {
-      logger.warn('Build gate: node_modules is a symlink — repairing before tsc');
+      logger.warn(
+        'Build gate: node_modules is a symlink — repairing before tsc',
+      );
       fs.rmSync(nmPath, { force: true });
       execSync('bun install', {
         cwd: MAIN_REPO,

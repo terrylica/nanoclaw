@@ -112,10 +112,7 @@ export class ValidationCircuitBreaker extends EventEmitter {
     this.successCount = 0;
     this.failureCount++;
 
-    if (
-      this.state === 'CLOSED' &&
-      this.failureCount >= this.failureThreshold
-    ) {
+    if (this.state === 'CLOSED' && this.failureCount >= this.failureThreshold) {
       this.openedAt = Date.now();
       this.transition('OPEN');
       this.emit('open');

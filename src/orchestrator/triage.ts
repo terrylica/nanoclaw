@@ -53,13 +53,17 @@ export async function triageChanges(
   const fpPatterns = loadFalsePositivePatterns();
 
   const filtered = deduped
-    .filter((f) => severityRank(f.severity) >= severityRank(MIN_SEVERITY_FOR_ISSUE))
+    .filter(
+      (f) => severityRank(f.severity) >= severityRank(MIN_SEVERITY_FOR_ISSUE),
+    )
     .filter((f) => {
       if (fpPatterns.length === 0) return true;
       return !fpPatterns.some((pattern) => {
         const patternWords = extractWords(pattern);
         const findingWords = extractWords(f.title + ' ' + f.description);
-        const intersection = findingWords.filter((w) => patternWords.includes(w));
+        const intersection = findingWords.filter((w) =>
+          patternWords.includes(w),
+        );
         const union = new Set([...findingWords, ...patternWords]);
         return union.size > 0 && intersection.length / union.size >= 0.35;
       });

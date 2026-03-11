@@ -70,7 +70,12 @@ export class IssueChunker {
           const wouldExceedLoad = currentLoad + load > MAX_COGNITIVE_LOAD;
 
           if (current.length > 0 && (wouldExceedSize || wouldExceedLoad)) {
-            chunks.push({ category, primaryFile: file, items: current, cognitiveLoad: currentLoad });
+            chunks.push({
+              category,
+              primaryFile: file,
+              items: current,
+              cognitiveLoad: currentLoad,
+            });
             current = [];
             currentLoad = 0;
           }
@@ -80,7 +85,12 @@ export class IssueChunker {
         }
 
         if (current.length > 0) {
-          chunks.push({ category, primaryFile: file, items: current, cognitiveLoad: currentLoad });
+          chunks.push({
+            category,
+            primaryFile: file,
+            items: current,
+            cognitiveLoad: currentLoad,
+          });
         }
       }
     }

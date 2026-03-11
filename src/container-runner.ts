@@ -195,7 +195,9 @@ async function buildVolumeMounts(
     'agent-runner-src',
   );
   if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    await fs.promises.cp(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+    await fs.promises.cp(agentRunnerSrc, groupAgentRunnerDir, {
+      recursive: true,
+    });
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,
@@ -319,7 +321,10 @@ export async function runContainerAgent(
     input.secrets = readSecrets();
     container.stdin.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code !== 'EPIPE') {
-        logger.warn({ group: group.name, error: err }, 'Container stdin stream error');
+        logger.warn(
+          { group: group.name, error: err },
+          'Container stdin stream error',
+        );
       }
     });
     container.stdin.write(JSON.stringify(input));
@@ -333,11 +338,17 @@ export async function runContainerAgent(
     let outputChain = Promise.resolve();
 
     container.stdout.on('error', (err) => {
-      logger.warn({ group: group.name, error: err }, 'Container stdout stream error');
+      logger.warn(
+        { group: group.name, error: err },
+        'Container stdout stream error',
+      );
     });
 
     container.stderr.on('error', (err) => {
-      logger.warn({ group: group.name, error: err }, 'Container stderr stream error');
+      logger.warn(
+        { group: group.name, error: err },
+        'Container stderr stream error',
+      );
     });
 
     container.stdout.on('data', (data) => {
@@ -400,7 +411,8 @@ export async function runContainerAgent(
         if (parseBuffer.length > CONTAINER_MAX_OUTPUT_SIZE) {
           const lastStart = parseBuffer.lastIndexOf(OUTPUT_START_MARKER);
           parseBuffer =
-            lastStart !== -1 && parseBuffer.length - lastStart < CONTAINER_MAX_OUTPUT_SIZE
+            lastStart !== -1 &&
+            parseBuffer.length - lastStart < CONTAINER_MAX_OUTPUT_SIZE
               ? parseBuffer.slice(lastStart)
               : '';
         }
