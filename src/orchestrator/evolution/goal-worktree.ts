@@ -41,7 +41,7 @@ export function createWorktree(goalId: string, repoPath: string): WorktreeInfo {
   // Clean up if leftover from a previous crash
   if (fs.existsSync(worktreePath)) {
     try {
-      execSync(`git worktree remove --force "${worktreePath}"`, {
+      execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
         cwd: repoPath,
         timeout: 30_000,
       });
@@ -53,8 +53,9 @@ export function createWorktree(goalId: string, repoPath: string): WorktreeInfo {
 
   // Delete stale branch if it exists
   try {
-    execSync(`git branch -D "${branch}" 2>/dev/null`, {
+    execFileSync('git', ['branch', '-D', branch], {
       cwd: repoPath,
+      stdio: ['pipe', 'pipe', 'ignore'],
       timeout: 10_000,
     });
   } catch {
@@ -62,7 +63,7 @@ export function createWorktree(goalId: string, repoPath: string): WorktreeInfo {
   }
 
   // Create worktree branching from HEAD
-  execSync(`git worktree add "${worktreePath}" -b "${branch}" HEAD`, {
+  execFileSync('git', ['worktree', 'add', worktreePath, '-b', branch, 'HEAD'], {
     cwd: repoPath,
     encoding: 'utf-8',
     timeout: 60_000,
@@ -173,7 +174,7 @@ export function commitInWorktree(
  */
 export function mergeToMain(branch: string, repoPath: string): string | null {
   try {
-    execSync(`git merge "${branch}" --ff-only`, {
+    execFileSync('git', ['merge', branch, '--ff-only'], {
       cwd: repoPath,
       encoding: 'utf-8',
       timeout: 30_000,
@@ -217,7 +218,7 @@ export function cleanupWorktree(
 ): void {
   // Remove worktree
   try {
-    execSync(`git worktree remove --force "${worktreePath}"`, {
+    execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
       cwd: repoPath,
       timeout: 30_000,
     });
@@ -225,7 +226,7 @@ export function cleanupWorktree(
     // Fallback: force remove directory
     try {
       fs.rmSync(worktreePath, { recursive: true, force: true });
-      execSync('git worktree prune', { cwd: repoPath, timeout: 10_000 });
+      execFileSync('git', ['worktree', 'prune'], { cwd: repoPath, timeout: 10_000 });
     } catch {
       /* best effort */
     }
@@ -233,7 +234,7 @@ export function cleanupWorktree(
 
   // Delete branch
   try {
-    execSync(`git branch -D "${branch}"`, {
+    execFileSync('git', ['branch', '-D', branch], {
       cwd: repoPath,
       timeout: 10_000,
     });
