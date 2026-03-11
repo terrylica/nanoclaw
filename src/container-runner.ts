@@ -321,6 +321,14 @@ export async function runContainerAgent(
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
 
+    container.stdout.on('error', (err) => {
+      logger.warn({ group: group.name, error: err }, 'Container stdout stream error');
+    });
+
+    container.stderr.on('error', (err) => {
+      logger.warn({ group: group.name, error: err }, 'Container stderr stream error');
+    });
+
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
 
