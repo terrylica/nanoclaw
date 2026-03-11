@@ -301,13 +301,27 @@ export function verifyFindingScript(
   }
 
   try {
-    const result = execSync(cmd, {
+    const tokens = cmd.split(/\s+/);
+    const spawnResult = spawnSync(tokens[0], tokens.slice(1), {
       cwd: repoPath,
       encoding: 'utf-8',
       timeout: 30_000,
       maxBuffer: 256 * 1024,
     });
-    const output = result.trim();
+    if (spawnResult.error) {
+      throw spawnResult.error;
+    }
+    if (spawnResult.status !== 0) {
+      logger.info(
+        { title: finding.title, cmd: cmd.slice(0, 80), status: spawnResult.status },
+        'Verification script failed — finding likely hallucinated',
+      );
+      return {
+        verified: false,
+        output: `Command failed: ${(spawnResult.stderr ?? '').slice(0, 200)}`,
+      };
+    }
+    const output = (spawnResult.stdout ?? '').trim();
     if (output.length === 0) {
       logger.info(
         { title: finding.title, cmd: cmd.slice(0, 80) },
