@@ -492,9 +492,9 @@ export async function runContainerAgent(
                 'Error in outputChain during timeout resolution',
               );
               resolve({
-                status: 'success',
+                status: 'error',
                 result: null,
-                newSessionId,
+                error: `Delivery failed: ${err instanceof Error ? err.message : String(err)}`,
               });
             });
           return;
@@ -612,9 +612,9 @@ export async function runContainerAgent(
               'Error in outputChain during completion resolution',
             );
             resolve({
-              status: 'success',
+              status: 'error',
               result: null,
-              newSessionId,
+              error: `Delivery failed: ${err instanceof Error ? err.message : String(err)}`,
             });
           });
         return;
