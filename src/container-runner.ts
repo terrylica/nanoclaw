@@ -150,7 +150,13 @@ async function buildVolumeMounts(
   if (fs.existsSync(skillsSrc)) {
     for (const skillDir of fs.readdirSync(skillsSrc)) {
       const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(srcDir);
+      } catch {
+        continue;
+      }
+      if (!stat.isDirectory()) continue;
       const dstDir = path.join(skillsDst, skillDir);
       await fs.promises.cp(srcDir, dstDir, { recursive: true });
     }
