@@ -512,56 +512,76 @@ export async function runResearchCycle(
   // Classify topics into domains
   const domains = topics.map(classifyDomain);
 
-  // Step 2: Claude multi-turn research with strategy-specific behavior
-  // Falls back to MiniMax knowledge if Claude WebSearch fails.
-  const explorationContext = buildExplorationContext(
-    explorationMap,
-    pastTopics,
-  );
+  // Step 2: MiniMax-first research — use MiniMax's training data as the primary
+  // research source, then optionally enhance with Claude WebSearch.
+  //
+  // Why MiniMax-first: Claude WebSearch via spawnSync blocks the event loop for
+  // up to 5min per query (10min total). This stalls all networking, causing the
+  // subsequent MiniMax synthesis call to fail with "fetch failed". MiniMax triage
+  // calls (which run before research) work fine, proving MiniMax is reachable —
+  // it's the 10min spawnSync blockage that kills connectivity.
   const results: ResearchResult[] = [];
-  for (const topic of topics) {
-    const result = await researchQuery(topic, strategy, explorationContext);
-    if (result.source !== 'failed') results.push(result);
-  }
 
-  // MiniMax fallback: if Claude WebSearch failed for all topics, use MiniMax's
-  // training data directly. Lower quality than web search but infinitely
-  // better than returning empty.
-  if (results.length === 0) {
-    logger.info(
-      { strategy, topics },
-      'All Claude research queries failed — using MiniMax fallback',
-    );
-    try {
-      const fallbackPrompt = `You are a senior software engineer with deep knowledge of TypeScript, Bun runtime, static analysis tools, and autonomous agent architectures.
+  // Primary: MiniMax generates research content from training data
+  try {
+    const researchPrompt = `You are a senior software engineer with deep expertise in TypeScript, Bun runtime, static analysis, and autonomous agent systems.
 
-NanoClaw is a TypeScript/Bun autonomous code validation system that:
-- Uses ast-grep rules + MiniMax LLM for code triage
-- Has a self-evolution engine that discovers issues, generates goals, and auto-implements fixes
-- Runs Claude Code in isolated git worktrees for implementation
-- Monitors a Python financial engineering codebase
+NanoClaw is a TypeScript/Bun autonomous code validation orchestrator that:
+- Uses ast-grep rules + MiniMax LLM for multi-expert code triage
+- Has a self-evolution engine: discovers issues → generates goals → auto-implements fixes via Claude Code in isolated git worktrees
+- Monitors target codebases for bugs, security issues, and code quality
+- Uses 4-strategy research rotation: exploit, explore, serendipity, contrarian
 
-Based on your knowledge, suggest concrete improvements related to these topics:
+Research strategy: ${strategy.toUpperCase()}
+${strategy === 'exploit' ? 'Go deep on specific tools, libraries, and implementation techniques.' : ''}
+${strategy === 'explore' ? 'Focus on capabilities NanoClaw does not have yet. Be creative.' : ''}
+${strategy === 'serendipity' ? 'Draw from adjacent fields: game AI, biology, distributed systems, NLP. Find transferable patterns.' : ''}
+${strategy === 'contrarian' ? 'Challenge assumptions. What should NanoClaw stop doing? What simpler alternatives exist?' : ''}
+
+Research these topics in depth:
 ${topics.map((t: string) => `- ${t}`).join('\n')}
 
-For each suggestion, include specific tool names, npm packages, algorithms, or code patterns.
-Be concrete and technical — not vague recommendations.`;
+For each topic, provide:
+1. Specific tools, npm packages, or algorithms (with names and versions)
+2. How they would integrate with a TypeScript/Bun codebase
+3. Concrete implementation approaches (not vague suggestions)
+4. Any tradeoffs or limitations
 
-      const fallbackResponse = await queryMiniMax(fallbackPrompt, apiKey);
-      if (fallbackResponse.trim().length > 100) {
-        results.push({
-          content: fallbackResponse,
-          source: 'minimax-fallback',
-        });
-        logger.info(
-          { outputLen: fallbackResponse.length, strategy },
-          'MiniMax fallback produced research content',
-        );
-      }
-    } catch (err) {
-      logger.warn(
-        { err: String(err).slice(0, 100), strategy },
-        'MiniMax fallback also failed',
+Be technical and detailed — we need enough depth for an AI agent to implement the suggestions.`;
+
+    const response = await queryMiniMax(researchPrompt, apiKey);
+    if (response.trim().length > 100) {
+      results.push({ content: response, source: 'minimax-fallback' });
+      logger.info(
+        { outputLen: response.length, strategy },
+        'MiniMax primary research produced content',
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { err: String(err).slice(0, 100), strategy },
+      'MiniMax primary research failed',
+    );
+  }
+
+  // Optional enhancement: try Claude WebSearch for ONE topic only (reduces
+  // spawnSync blockage from 10min to 5min max). Only attempt if MiniMax
+  // succeeded (so synthesis won't fail from stale connections).
+  if (results.length > 0) {
+    const explorationContext = buildExplorationContext(
+      explorationMap,
+      pastTopics,
+    );
+    const claudeResult = await researchQuery(
+      topics[0],
+      strategy,
+      explorationContext,
+    );
+    if (claudeResult.source !== 'failed') {
+      results.push(claudeResult);
+      logger.info(
+        { query: topics[0].slice(0, 50), strategy },
+        'Claude WebSearch enhanced research',
       );
     }
   }
