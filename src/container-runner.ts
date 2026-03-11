@@ -468,18 +468,22 @@ export async function runContainerAgent(
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
         const timeoutLog = path.join(logsDir, `container-${ts}.log`);
-        fs.writeFileSync(
-          timeoutLog,
-          [
-            `=== Container Run Log (TIMEOUT) ===`,
-            `Timestamp: ${new Date().toISOString()}`,
-            `Group: ${group.name}`,
-            `Container: ${containerName}`,
-            `Duration: ${duration}ms`,
-            `Exit Code: ${code}`,
-            `Last Output Time: ${lastOutputTime !== null ? new Date(lastOutputTime).toISOString() : 'none'}`,
-          ].join('\n'),
-        );
+        try {
+          fs.writeFileSync(
+            timeoutLog,
+            [
+              `=== Container Run Log (TIMEOUT) ===`,
+              `Timestamp: ${new Date().toISOString()}`,
+              `Group: ${group.name}`,
+              `Container: ${containerName}`,
+              `Duration: ${duration}ms`,
+              `Exit Code: ${code}`,
+              `Last Output Time: ${lastOutputTime !== null ? new Date(lastOutputTime).toISOString() : 'none'}`,
+            ].join('\n'),
+          );
+        } catch (err) {
+          logger.warn({ err, timeoutLog }, 'Failed to write timeout log');
+        }
 
         // Timeout shortly after output = idle cleanup (agent sent its response,
         // container reaped after idle period). Timeout long after last output
@@ -582,8 +586,12 @@ export async function runContainerAgent(
         );
       }
 
-      fs.writeFileSync(logFile, logLines.join('\n'));
-      logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
+      try {
+        fs.writeFileSync(logFile, logLines.join('\n'));
+        logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
+      } catch (err) {
+        logger.warn({ err, logFile }, 'Failed to write container log');
+      }
 
       if (code !== 0) {
         logger.error(
@@ -721,7 +729,11 @@ export function writeTasksSnapshot(
     : tasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+  try {
+    fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+  } catch (err) {
+    logger.warn({ err, tasksFile }, 'Failed to write tasks snapshot');
+  }
 }
 
 export interface AvailableGroup {
@@ -749,15 +761,19 @@ export function writeGroupsSnapshot(
   const visibleGroups = isMain ? groups : [];
 
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
-  fs.writeFileSync(
-    groupsFile,
-    JSON.stringify(
-      {
-        groups: visibleGroups,
-        lastSync: new Date().toISOString(),
-      },
-      null,
-      2,
-    ),
-  );
+  try {
+    fs.writeFileSync(
+      groupsFile,
+      JSON.stringify(
+        {
+          groups: visibleGroups,
+          lastSync: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+    );
+  } catch (err) {
+    logger.warn({ err, groupsFile }, 'Failed to write groups snapshot');
+  }
 }
