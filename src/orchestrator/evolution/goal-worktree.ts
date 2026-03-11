@@ -97,7 +97,7 @@ export function getWorktreeChanges(worktreePath: string): string[] {
 }
 
 /** Get the full diff in a worktree (for code review). */
-export function getWorktreeDiff(worktreePath: string): string {
+export async function getWorktreeDiff(worktreePath: string): Promise<string> {
   // Staged + unstaged diff
   const diff = execSync('git diff HEAD', {
     cwd: worktreePath,
@@ -115,20 +115,21 @@ export function getWorktreeDiff(worktreePath: string): string {
 
   if (!untracked) return diff;
 
-  const untrackedDiffs: string[] = [];
-  for (const file of untracked.split('\n').filter(Boolean)) {
-    try {
-      const content = fs.readFileSync(path.join(worktreePath, file), 'utf-8');
-      untrackedDiffs.push(
-        `--- /dev/null\n+++ b/${file}\n${content
+  const files = untracked.split('\n').filter(Boolean);
+  const untrackedDiffs = await Promise.all(
+    files.map(async (file) => {
+      try {
+        const content = await fs.promises.readFile(path.join(worktreePath, file), 'utf-8');
+        return `--- /dev/null\n+++ b/${file}\n${content
           .split('\n')
           .map((l) => `+${l}`)
-          .join('\n')}`,
-      );
-    } catch {
-      /* skip unreadable files */
-    }
-  }
+          .join('\n')}`;
+      } catch {
+        /* skip unreadable files */
+        return null;
+      }
+    }),
+  );
 
   return [diff, ...untrackedDiffs].filter(Boolean).join('\n');
 }

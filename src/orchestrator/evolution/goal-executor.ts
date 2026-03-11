@@ -177,7 +177,7 @@ export async function executeGoal(
     );
 
     // Step 4: Run validation pipeline (4 gates)
-    const diff = getWorktreeDiff(worktreePath);
+    const diff = await getWorktreeDiff(worktreePath);
     const validation = await runValidationPipeline(
       worktreePath,
       changedFiles,
