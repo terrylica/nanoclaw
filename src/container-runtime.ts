@@ -19,7 +19,8 @@ export function readonlyMountArgs(
 
 /** Returns the shell command to stop a container by name. */
 export function stopContainer(name: string): string {
-  return `${CONTAINER_RUNTIME_BIN} stop ${name}`;
+  const escaped = `'${name.replace(/'/g, "'\\''")}'`;
+  return `${CONTAINER_RUNTIME_BIN} stop ${escaped}`;
 }
 
 /** Ensure the container runtime is running, starting it if needed. */
