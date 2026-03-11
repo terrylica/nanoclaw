@@ -59,6 +59,8 @@ export interface GoalExecutionResult {
   worktreePath: string | null;
   /** Whether the goal produced changes */
   hadChanges: boolean;
+  /** Whether Claude API rate limit was hit */
+  rateLimited?: boolean;
 }
 
 // --- Executor ---
@@ -161,7 +163,24 @@ export async function executeGoal(
       'Claude Code execution complete',
     );
 
-    // Step 3: Check for changes
+    // Step 3: Detect Claude API rate limit — pause evolution instead of burning cycles
+    if (
+      claudeOutput.includes("hit your limit") ||
+      claudeOutput.includes("resets ") ||
+      claudeOutput.includes("rate limit")
+    ) {
+      updateAction(action, 'failed', {
+        result: `Claude API rate limited: ${claudeOutput.slice(0, 200)}`,
+      });
+      logger.warn(
+        { goalId: action.id, output: claudeOutput.slice(0, 100) },
+        'Claude API rate limited — pausing goal execution',
+      );
+      result.rateLimited = true;
+      return result;
+    }
+
+    // Step 4: Check for changes
     const changedFiles = getWorktreeChanges(worktreePath);
     result.hadChanges = changedFiles.length > 0;
 
@@ -169,7 +188,10 @@ export async function executeGoal(
       updateAction(action, 'failed', {
         result: `Already fixed / no changes needed: ${claudeOutput.slice(0, 200)}`,
       });
-      logger.info({ goalId: action.id }, 'Goal produced no changes — marking as already fixed');
+      logger.info(
+        { goalId: action.id },
+        'Goal produced no changes — marking as already fixed',
+      );
       return result;
     }
 
@@ -289,7 +311,10 @@ export async function executeGoal(
       try {
         cleanupWorktree(worktreePath, branch, SELF_REPO);
       } catch (cleanupErr) {
-        logger.warn({ err: cleanupErr, worktreePath, branch }, 'Worktree cleanup failed — branch may need manual removal');
+        logger.warn(
+          { err: cleanupErr, worktreePath, branch },
+          'Worktree cleanup failed — branch may need manual removal',
+        );
       }
     }
 

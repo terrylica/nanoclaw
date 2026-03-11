@@ -230,7 +230,9 @@ async function stepSelfScan(
 
     // Build context of already-addressed goals so self-scan doesn't rediscover them
     const completedGoals = (evoState.completedGoals || []).slice(-20);
-    const queuedGoals = (evoState.userGoals || []).map((g: UserGoal) => g.text.slice(0, 80));
+    const queuedGoals = (evoState.userGoals || []).map((g: UserGoal) =>
+      g.text.slice(0, 80),
+    );
     const skipSection =
       completedGoals.length > 0 || queuedGoals.length > 0
         ? `\nDO NOT report issues that match these (already addressed or queued):\n${[...completedGoals, ...queuedGoals].map((g) => `- ${g}`).join('\n')}\n`
@@ -357,6 +359,12 @@ async function stepGoalExecution(
   const goal = goals[0];
   const { executeGoal } = await import('./goal-executor.js');
   const result = await executeGoal(goal, evoState, apiKey);
+
+  // If rate limited, keep goal in queue and signal caller to pause
+  if (result.rateLimited) {
+    logger.warn('Claude API rate limited — keeping goal in queue, pausing evolution');
+    return result.action;
+  }
 
   // Remove goal from queue and record in completed history for dedup
   removeGoal(evoState, 0);

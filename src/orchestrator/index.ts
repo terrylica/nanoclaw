@@ -178,9 +178,8 @@ export async function startOrchestratorLoop(config: {
 
   // Startup guard: clean up stale goal worktrees from crashed sessions
   try {
-    const { cleanupStaleWorktrees } = await import(
-      './evolution/goal-worktree.js'
-    );
+    const { cleanupStaleWorktrees } =
+      await import('./evolution/goal-worktree.js');
     const cleaned = cleanupStaleWorktrees(config.repoPath);
     if (cleaned > 0) {
       logger.info({ cleaned }, 'Startup: cleaned stale goal worktrees');
