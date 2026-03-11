@@ -195,7 +195,7 @@ async function buildVolumeMounts(
     'agent-runner-src',
   );
   if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+    await fs.promises.cp(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,
