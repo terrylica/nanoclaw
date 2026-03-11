@@ -38,7 +38,7 @@ export async function generateRule(
     return { generated: false, reason: 'No recognized language in files' };
   }
 
-  const language = [...languages][0]; // Primary language
+  const language = [...languages][0]!; // Primary language — safe: size > 0 guard above
 
   const prompt = `You are an ast-grep rule expert. Write a YAML rule that catches the following code pattern.
 
