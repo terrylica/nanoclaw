@@ -1,7 +1,7 @@
 /**
  * Static analysis integrations: difftastic, ast-grep, OpenGrep.
  */
-import { execSync, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -27,11 +27,13 @@ function getSemanticDiffForFile(
   try {
     if (!fs.existsSync(DIFFT_BINARY)) return null;
 
-    const oldContent = execSync(`git show ${sinceCommit}:${filePath}`, {
+    const gitShow = spawnSync('git', ['show', `${sinceCommit}:${filePath}`], {
       cwd: repoPath,
       encoding: 'utf-8',
       timeout: 30_000,
     });
+    if (gitShow.status !== 0) return null;
+    const oldContent = gitShow.stdout;
 
     const newPath = path.join(repoPath, filePath);
     if (!fs.existsSync(newPath)) return null;
