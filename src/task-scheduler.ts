@@ -45,8 +45,9 @@ export function computeNextRun(task: ScheduledTask): string | null {
   }
 
   if (task.schedule_type === 'interval') {
-    const ms = parseInt(task.schedule_value, 10);
-    if (!ms || ms <= 0) {
+    const trimmed = task.schedule_value.trim();
+    const ms = /^\d+$/.test(trimmed) ? parseInt(trimmed, 10) : NaN;
+    if (!ms || ms <= 0 || isNaN(ms)) {
       // Guard against malformed interval that would cause an infinite loop
       logger.warn(
         { taskId: task.id, value: task.schedule_value },
