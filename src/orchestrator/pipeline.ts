@@ -54,10 +54,14 @@ export function loadFalsePositivePatterns(): string[] {
 
 export function syncFalsePositivePatterns(): void {
   try {
-    const result = execSync(
-      `gh issue list --repo ${_targetRepo} --label nanoclaw --state closed --json title,state --limit 50`,
+    const spawnResult = spawnSync(
+      'gh',
+      ['issue', 'list', '--repo', _targetRepo, '--label', 'nanoclaw', '--state', 'closed', '--json', 'title,state', '--limit', '50'],
       { encoding: 'utf-8', timeout: 60_000 },
     );
+    if (spawnResult.error) throw spawnResult.error;
+    if (spawnResult.status !== 0) throw new Error(spawnResult.stderr || `gh exited with status ${spawnResult.status}`);
+    const result = spawnResult.stdout;
     const issues = JSON.parse(result) as Array<{
       title: string;
       state: string;
