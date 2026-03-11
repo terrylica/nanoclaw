@@ -165,15 +165,19 @@ export class GroupQueue {
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+    let tempPath: string | undefined;
     try {
       fs.mkdirSync(inputDir, { recursive: true });
       const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
       const filepath = path.join(inputDir, filename);
-      const tempPath = `${filepath}.tmp`;
+      tempPath = `${filepath}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
       return true;
     } catch (err) {
+      if (tempPath) {
+        try { fs.unlinkSync(tempPath); } catch { /* already gone or never written */ }
+      }
       logger.error({ groupJid, err }, 'Failed to write IPC message file, message dropped');
       return false;
     }
