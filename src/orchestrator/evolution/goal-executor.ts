@@ -13,6 +13,7 @@
 import path from 'path';
 import { execSync, spawnSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 import { logger } from '../../logger.js';
@@ -38,10 +39,7 @@ import type { GateResult } from './goal-validator.js';
 
 // --- Constants ---
 
-const CLAUDE_BIN = path.join(
-  process.env.HOME || '/Users/terryli',
-  '.local/bin/claude',
-);
+const CLAUDE_BIN = path.join(os.homedir(), '.local/bin/claude');
 const GOAL_BUDGET_USD = 2.0;
 const GOAL_TIMEOUT_MS = 300_000; // 5 min
 const SELF_REPO = path.resolve(
