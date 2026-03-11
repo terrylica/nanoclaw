@@ -21,7 +21,7 @@ import { logger } from '../../logger.js';
 // --- Constants ---
 
 const FIRECRAWL_URL = 'http://172.25.236.1:3003';
-const CLAUDE_RESEARCH_BUDGET = '1.50';
+const CLAUDE_RESEARCH_BUDGET = '0.50';
 const CLAUDE_BIN = path.join(
   process.env.HOME || '/Users/terryli',
   '.local/bin/claude',
@@ -167,13 +167,15 @@ INSTRUCTIONS:
         'WebSearch,WebFetch',
         '--max-budget-usd',
         CLAUDE_RESEARCH_BUDGET,
+        '--max-turns',
+        '3',
         '--output-format',
         'text',
       ],
       {
         input: `${systemPrompt}\n\n---\n\nResearch topic: ${query}`,
         encoding: 'utf-8',
-        timeout: 180_000, // 3 min for multi-turn
+        timeout: 300_000, // 5 min — Claude startup + WebSearch needs headroom
         maxBuffer: 2 * 1024 * 1024,
       },
     );
