@@ -549,7 +549,7 @@ For each topic, provide:
 
 Be technical and detailed — we need enough depth for an AI agent to implement the suggestions.`;
 
-    const response = await queryMiniMax(researchPrompt, apiKey);
+    const response = await queryMiniMax(researchPrompt, apiKey, '', 120_000);
     if (response.trim().length > 100) {
       results.push({ content: response, source: 'minimax-fallback' });
       logger.info(
@@ -638,7 +638,7 @@ Return ONLY the JSON array, no other text.`;
 
   let rankedGoals: RankedGoal[] = [];
   try {
-    const synthesisResponse = await queryMiniMax(synthesisPrompt, apiKey);
+    const synthesisResponse = await queryMiniMax(synthesisPrompt, apiKey, '', 120_000);
     rankedGoals = parseRankedGoals(synthesisResponse);
     logger.info(
       { strategy, parsedCount: rankedGoals.length, rawLen: synthesisResponse.length },

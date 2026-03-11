@@ -38,6 +38,7 @@ export async function queryMiniMax(
   prompt: string,
   apiKey: string,
   systemPrompt = '',
+  timeoutMs = 60_000,
 ): Promise<string> {
   const body: Record<string, unknown> = {
     model: MINIMAX_MODEL,
@@ -60,7 +61,7 @@ export async function queryMiniMax(
       },
       body: JSON.stringify(body),
     },
-    60_000,
+    timeoutMs,
   );
   logger.debug('MiniMax API response received');
 
