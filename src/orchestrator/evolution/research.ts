@@ -13,6 +13,7 @@
  * MiniMax handles topic selection, synthesis, and relevance scoring.
  * Exploration map tracks domain coverage and yield for adaptive steering.
  */
+import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 
@@ -22,10 +23,7 @@ import { logger } from '../../logger.js';
 
 const FIRECRAWL_URL = 'http://172.25.236.1:3003';
 const CLAUDE_RESEARCH_BUDGET = '0.50';
-const CLAUDE_BIN = path.join(
-  process.env.HOME || '/Users/terryli',
-  '.local/bin/claude',
-);
+const CLAUDE_BIN = path.join(os.homedir(), '.local/bin/claude');
 
 // --- Types ---
 

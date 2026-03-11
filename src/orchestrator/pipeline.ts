@@ -4,14 +4,12 @@
  */
 import { execSync, spawnSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { DATA_DIR } from '../config.js';
 
-const CLAUDE_BIN = path.join(
-  process.env.HOME || '/Users/terryli',
-  '.local/bin/claude',
-);
+const CLAUDE_BIN = path.join(os.homedir(), '.local/bin/claude');
 import { logger } from '../logger.js';
 import { getPrompt } from './evolution/prompt-registry.js';
 import { readRepoFile } from './git-ops.js';
