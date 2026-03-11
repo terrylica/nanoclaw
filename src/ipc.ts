@@ -36,6 +36,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
   const ipcBaseDir = path.join(DATA_DIR, 'ipc');
   fs.mkdirSync(ipcBaseDir, { recursive: true });
 
+  let baseDirErrorCount = 0;
+  const MAX_BACKOFF_MS = 60_000;
+
   const processIpcFiles = async () => {
     // Scan all group IPC directories (identity determined by directory)
     let groupFolders: string[];
@@ -44,9 +47,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
       groupFolders = entries
         .filter((e: { isDirectory(): boolean; name: string }) => e.isDirectory() && e.name !== 'errors')
         .map((e: { name: string }) => e.name);
+      baseDirErrorCount = 0;
     } catch (err) {
-      logger.error({ err }, 'Error reading IPC base directory');
-      setTimeout(processIpcFiles, IPC_POLL_INTERVAL);
+      baseDirErrorCount++;
+      const backoffMs = Math.min(IPC_POLL_INTERVAL * 2 ** (baseDirErrorCount - 1), MAX_BACKOFF_MS);
+      logger.error({ err, backoffMs }, 'Error reading IPC base directory');
+      setTimeout(processIpcFiles, backoffMs);
       return;
     }
 
