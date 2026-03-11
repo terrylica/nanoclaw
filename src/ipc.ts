@@ -125,14 +125,20 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 );
               }
             }
-            await fs.promises.unlink(filePath);
           } catch (err) {
             // sendMessage failed — leave file in place so next poll retries it
             logger.error(
               { file, sourceGroup, err },
               'Error processing IPC message, will retry',
             );
+            continue;
           }
+          await fs.promises.unlink(filePath).catch((err) => {
+            logger.warn(
+              { file, sourceGroup, err },
+              'IPC message delivered but failed to delete file',
+            );
+          });
         }
       } catch (err) {
         logger.error(
