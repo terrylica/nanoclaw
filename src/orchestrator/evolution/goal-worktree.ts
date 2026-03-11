@@ -4,7 +4,7 @@
  * Each goal runs in a temporary worktree so failed goals leave no trace on main.
  * Flow: create worktree → Claude Code runs → commit in worktree → merge to main → cleanup.
  */
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -147,7 +147,7 @@ export function commitInWorktree(
   });
 
   // Commit
-  execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+  execFileSync('git', ['commit', '-m', message], {
     cwd: worktreePath,
     encoding: 'utf-8',
     timeout: 30_000,

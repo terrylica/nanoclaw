@@ -6,7 +6,7 @@
  * - Full audit trail in git log + evolution-actions.ndjson
  * - Revert any commit with a single command
  */
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 
 import { logger } from '../../logger.js';
 import type { EvolutionAction } from './state.js';
@@ -41,7 +41,7 @@ export function commitEvolution(
 
     // Create commit with evolution prefix
     const message = `evolution(${action.type}): ${action.description}`;
-    execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+    execFileSync('git', ['commit', '-m', message], {
       cwd: repoPath,
       encoding: 'utf-8',
       timeout: 30_000,
