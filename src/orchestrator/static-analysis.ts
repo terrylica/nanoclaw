@@ -12,8 +12,11 @@ import {
   AST_GREP_BINARY,
   AST_GREP_RULES_DIR,
   DIFFT_BINARY,
+  ESLINT_BINARY,
   OPENGREP_BINARY,
+  SEMGREP_BINARY,
 } from './types.js';
+import type { Finding } from './types.js';
 
 /**
  * Get AST-aware semantic diff via difftastic for a single file.
@@ -239,5 +242,177 @@ export function runOpenGrepOnFiles(
       logger.warn({ err: notifyErr }, 'OpenGrep notification failed');
     });
     return '';
+  }
+}
+
+/**
+ * Run ESLint on changed TypeScript/JavaScript files.
+ * Returns structured Finding[] for direct use in the triage pipeline.
+ * Gracefully skips if ESLint is not available or no config is present.
+ */
+export function runEslintOnFiles(
+  repoPath: string,
+  changedFiles: string[],
+): Finding[] {
+  // Prefer project-local eslint, fall back to env var / system eslint
+  const localEslint = path.join(repoPath, 'node_modules/.bin/eslint');
+  const eslintBin = fs.existsSync(localEslint)
+    ? localEslint
+    : ESLINT_BINARY;
+
+  // Only run if ESLint has a config in the repo (avoids noisy no-config runs)
+  const hasConfig = [
+    'eslint.config.js',
+    'eslint.config.mjs',
+    '.eslintrc.js',
+    '.eslintrc.cjs',
+    '.eslintrc.json',
+    '.eslintrc.yml',
+    '.eslintrc.yaml',
+    '.eslintrc',
+  ].some((f) => fs.existsSync(path.join(repoPath, f)));
+
+  if (!hasConfig) {
+    logger.info({ repoPath }, 'No ESLint config found, skipping ESLint scan');
+    return [];
+  }
+
+  const targetFiles = changedFiles
+    .filter((f) => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f))
+    .slice(0, 20)
+    .map((f) => path.join(repoPath, f))
+    .filter((f) => fs.existsSync(f));
+
+  if (targetFiles.length === 0) return [];
+
+  try {
+    const result = spawnSync(eslintBin, ['--format', 'json', ...targetFiles], {
+      encoding: 'utf-8',
+      timeout: 60_000,
+      maxBuffer: 2 * 1024 * 1024,
+      cwd: repoPath,
+    });
+
+    // ESLint exits 1 when lint errors are found — still parse stdout
+    const output = result.stdout?.trim();
+    if (!output) return [];
+
+    const parsed = JSON.parse(output) as Array<{
+      filePath: string;
+      messages: Array<{
+        ruleId: string | null;
+        message: string;
+        severity: number; // 1=warn, 2=error
+        line: number;
+      }>;
+    }>;
+
+    const findings: Finding[] = [];
+    for (const file of parsed) {
+      const relPath = path.relative(repoPath, file.filePath);
+      for (const msg of file.messages) {
+        if (msg.severity < 2) continue; // skip warnings, only errors
+        findings.push({
+          type: 'bug',
+          severity: 'medium',
+          confidence: 5,
+          title: `ESLint: ${msg.ruleId ?? 'lint-error'} in ${path.basename(relPath)}`,
+          description: `${msg.message} (${relPath}:${msg.line})`,
+          files: [relPath],
+          validation: `grep -n "" "${relPath}" | head -${msg.line + 3} | tail -6`,
+        });
+      }
+    }
+
+    if (findings.length > 0) {
+      logger.info(
+        { count: findings.length, files: targetFiles.length },
+        'ESLint findings detected',
+      );
+    }
+    return findings;
+  } catch (err) {
+    logger.debug({ err }, 'ESLint run failed (non-fatal)');
+    return [];
+  }
+}
+
+/**
+ * Run semgrep SAST on changed files.
+ * Returns structured Finding[] for direct use in the triage pipeline.
+ * Gracefully skips if semgrep is not available.
+ */
+export function runSemgrepOnFiles(
+  repoPath: string,
+  changedFiles: string[],
+): Finding[] {
+  // Verify semgrep is available
+  const versionCheck = spawnSync(SEMGREP_BINARY, ['--version'], {
+    encoding: 'utf-8',
+    timeout: 10_000,
+  });
+  if (versionCheck.error || versionCheck.status !== 0) {
+    logger.info({ binary: SEMGREP_BINARY }, 'semgrep binary not available, skipping');
+    return [];
+  }
+
+  const targetFiles = changedFiles
+    .slice(0, 20)
+    .map((f) => path.join(repoPath, f))
+    .filter((f) => fs.existsSync(f));
+
+  if (targetFiles.length === 0) return [];
+
+  try {
+    const result = spawnSync(
+      SEMGREP_BINARY,
+      ['scan', '--config=auto', '--json', '--quiet', ...targetFiles],
+      {
+        encoding: 'utf-8',
+        timeout: 60_000,
+        maxBuffer: 4 * 1024 * 1024,
+        cwd: repoPath,
+      },
+    );
+
+    const output = result.stdout?.trim();
+    if (!output) return [];
+
+    const parsed = JSON.parse(output) as {
+      results?: Array<{
+        check_id: string;
+        path: string;
+        start: { line: number };
+        extra: { message: string; severity: string };
+      }>;
+    };
+    const results = parsed.results ?? [];
+    if (results.length === 0) return [];
+
+    const findings: Finding[] = results.slice(0, 20).map((r) => {
+      const sev = r.extra?.severity?.toLowerCase();
+      const severity: Finding['severity'] =
+        sev === 'error' ? 'high' : sev === 'warning' ? 'medium' : 'low';
+      const relPath = path.relative(repoPath, r.path);
+      const ruleShort = r.check_id.split('.').pop() ?? r.check_id;
+      return {
+        type: 'bug',
+        severity,
+        confidence: 5,
+        title: `semgrep: ${ruleShort} in ${path.basename(r.path)}`,
+        description: `${r.extra?.message ?? ''} (${relPath}:${r.start?.line})`,
+        files: [relPath],
+        validation: `grep -n "" "${relPath}" | head -${r.start.line + 3} | tail -6`,
+      };
+    });
+
+    logger.info(
+      { count: findings.length, files: targetFiles.length },
+      'semgrep findings detected',
+    );
+    return findings;
+  } catch (err) {
+    logger.debug({ err }, 'semgrep run failed (non-fatal)');
+    return [];
   }
 }

@@ -41,6 +41,12 @@ export const AST_GREP_RULES_DIR = path.join(
 export const OPENGREP_BINARY =
   process.env.OPENGREP_BINARY || `${process.env.HOME}/.local/bin/opengrep`;
 
+// ESLint (TypeScript/JavaScript linting)
+export const ESLINT_BINARY = process.env.ESLINT_BINARY || 'eslint';
+
+// Semgrep (multi-language SAST)
+export const SEMGREP_BINARY = process.env.SEMGREP_BINARY || 'semgrep';
+
 // Rate limiting
 export const MAX_ISSUES_PER_HOUR = 6;
 export const MAX_FINDINGS_PER_CYCLE = 5;
