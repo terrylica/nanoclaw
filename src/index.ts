@@ -102,8 +102,10 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   registeredGroups[jid] = group;
   setRegisteredGroup(jid, group);
 
-  // Create group folder
-  fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
+  // Create group folder (async to avoid blocking the event loop)
+  fs.promises.mkdir(path.join(groupDir, 'logs'), { recursive: true }).catch((err) => {
+    logger.warn({ jid, err }, 'Failed to create group logs directory');
+  });
 
   logger.info(
     { jid, name: group.name, folder: group.folder },
