@@ -1,7 +1,7 @@
 /**
  * Git operations and file reading for the orchestrator.
  */
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -41,47 +41,48 @@ export function getGitBranch(repoPath: string): string {
 }
 
 export function getDiff(repoPath: string, sinceCommit: string): string {
-  try {
-    return execSync(
-      `git diff ${sinceCommit}..HEAD --stat --unified=5 -- '*.ts' '*.json' '*.yaml' '*.yml'`,
-      { cwd: repoPath, encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 },
-    );
-  } catch (err) {
-    logger.error({ err }, 'git diff failed');
+  const result = spawnSync(
+    'git',
+    ['diff', `${sinceCommit}..HEAD`, '--stat', '--unified=5', '--', '*.ts', '*.json', '*.yaml', '*.yml'],
+    { cwd: repoPath, encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 },
+  );
+  if (result.error || result.status !== 0) {
+    logger.error({ err: result.error ?? result.stderr }, 'git diff failed');
     return '';
   }
+  return result.stdout;
 }
 
 export function getChangedFiles(
   repoPath: string,
   sinceCommit: string,
 ): string[] {
-  try {
-    const output = execSync(
-      `git diff ${sinceCommit}..HEAD --name-only -- '*.ts' '*.json' '*.yaml' '*.yml'`,
-      { cwd: repoPath, encoding: 'utf-8' },
-    );
-    return output
-      .trim()
-      .split('\n')
-      .filter((f) => f.length > 0);
-  } catch (err) {
-    logger.error({ err }, 'git diff --name-only failed');
+  const result = spawnSync(
+    'git',
+    ['diff', `${sinceCommit}..HEAD`, '--name-only', '--', '*.ts', '*.json', '*.yaml', '*.yml'],
+    { cwd: repoPath, encoding: 'utf-8' },
+  );
+  if (result.error || result.status !== 0) {
+    logger.error({ err: result.error ?? result.stderr }, 'git diff --name-only failed');
     return [];
   }
+  return result.stdout
+    .trim()
+    .split('\n')
+    .filter((f) => f.length > 0);
 }
 
 export function getCommitLog(repoPath: string, sinceCommit: string): string {
-  try {
-    return execSync(`git log ${sinceCommit}..HEAD --oneline --no-merges`, {
-      cwd: repoPath,
-      encoding: 'utf-8',
-      maxBuffer: 1024 * 1024,
-    }).trim();
-  } catch (err) {
-    logger.error({ err }, 'git log failed');
+  const result = spawnSync(
+    'git',
+    ['log', `${sinceCommit}..HEAD`, '--oneline', '--no-merges'],
+    { cwd: repoPath, encoding: 'utf-8', maxBuffer: 1024 * 1024 },
+  );
+  if (result.error || result.status !== 0) {
+    logger.error({ err: result.error ?? result.stderr }, 'git log failed');
     return '';
   }
+  return result.stdout.trim();
 }
 
 /** Read file content from the repo for validation context */
