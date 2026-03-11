@@ -204,8 +204,6 @@ async function runTask(
       },
     );
 
-    if (closeTimer) clearTimeout(closeTimer);
-
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
     } else if (output.result) {
@@ -218,9 +216,10 @@ async function runTask(
       'Task completed',
     );
   } catch (err) {
-    if (closeTimer) clearTimeout(closeTimer);
     error = err instanceof Error ? err.message : String(err);
     logger.error({ taskId: task.id, error }, 'Task failed');
+  } finally {
+    if (closeTimer) clearTimeout(closeTimer);
   }
 
   const durationMs = Date.now() - startTime;
