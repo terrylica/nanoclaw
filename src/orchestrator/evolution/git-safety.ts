@@ -6,7 +6,7 @@
  * - Full audit trail in git log + evolution-actions.ndjson
  * - Revert any commit with a single command
  */
-import { execFileSync, execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 import { logger } from '../../logger.js';
 import type { EvolutionAction } from './state.js';
@@ -20,7 +20,7 @@ export function commitEvolution(
   try {
     // Stage specific files
     for (const file of files) {
-      execSync(`git add "${file}"`, {
+      execFileSync('git', ['add', file], {
         cwd: repoPath,
         encoding: 'utf-8',
         timeout: 30_000,
@@ -28,7 +28,7 @@ export function commitEvolution(
     }
 
     // Check if there are actually staged changes
-    const status = execSync('git diff --cached --stat', {
+    const status = execFileSync('git', ['diff', '--cached', '--stat'], {
       cwd: repoPath,
       encoding: 'utf-8',
       timeout: 10_000,
@@ -48,7 +48,7 @@ export function commitEvolution(
     });
 
     // Get the commit hash
-    const hash = execSync('git rev-parse HEAD', {
+    const hash = execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: repoPath,
       encoding: 'utf-8',
       timeout: 30_000,
@@ -67,7 +67,7 @@ export function commitEvolution(
     );
     // Reset staged changes on failure
     try {
-      execSync('git reset HEAD', {
+      execFileSync('git', ['reset', 'HEAD'], {
         cwd: repoPath,
         encoding: 'utf-8',
         timeout: 30_000,
@@ -82,13 +82,13 @@ export function commitEvolution(
 /** Revert an evolution commit */
 export function revertEvolution(hash: string, repoPath: string): string | null {
   try {
-    execSync(`git revert --no-edit ${hash}`, {
+    execFileSync('git', ['revert', '--no-edit', hash], {
       cwd: repoPath,
       encoding: 'utf-8',
       timeout: 30_000,
     });
 
-    const revertHash = execSync('git rev-parse HEAD', {
+    const revertHash = execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: repoPath,
       encoding: 'utf-8',
       timeout: 30_000,
@@ -104,7 +104,7 @@ export function revertEvolution(hash: string, repoPath: string): string | null {
     logger.error({ err, hash }, 'Failed to revert evolution commit');
     // Abort revert if it left us in a conflict state
     try {
-      execSync('git revert --abort', {
+      execFileSync('git', ['revert', '--abort'], {
         cwd: repoPath,
         encoding: 'utf-8',
         timeout: 30_000,
@@ -120,7 +120,7 @@ export function revertEvolution(hash: string, repoPath: string): string | null {
 export function canRevert(hash: string, repoPath: string): boolean {
   try {
     // Check if the commit exists and is revertable
-    execSync(`git cat-file -t ${hash}`, {
+    execFileSync('git', ['cat-file', '-t', hash], {
       cwd: repoPath,
       encoding: 'utf-8',
       timeout: 30_000,
